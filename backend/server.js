@@ -1,26 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
 import Anthropic from '@anthropic-ai/sdk';
+import pool from './db/pool.js';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ─── In-memory store (replace with DB in production) ───────────────────────
-const store = {
-  countries: [],
-  smes: {},        // countryId -> []
-  websites: {},    // smeId -> { html, deployedUrl }
-  emails: {},      // smeId -> string
-};
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 async function callClaude(systemPrompt, userPrompt, maxTokens = 4096) {
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
@@ -31,257 +24,401 @@ async function callClaude(systemPrompt, userPrompt, maxTokens = 4096) {
   return response.content[0].text;
 }
 
-// ─── ROUTES ─────────────────────────────────────────────────────────────────
+// SME search using Claude with web_search tool to find REAL businesses
+async function searchSMEsWithWebSearch(countryName) {
+  // Step 1: Use web_search tool to gather real data
+  const searchResponse = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+    system: `You are a business researcher finding real small businesses in ${countryName} that operate only on Facebook/Instagram (no website). Use web search to find actual businesses, then extract structured data. Return ONLY a valid JSON array at the end.`,
+    messages: [{
+      role: 'user',
+      content: `Search for real small businesses in ${countryName} that operate only on social media (Facebook, Instagram) without a website. 
 
-// --- Countries ---
-app.get('/api/countries', (req, res) => {
-  res.json(store.countries);
-});
+Search for:
+1. "${countryName} small business facebook page handmade"
+2. "${countryName} local shop instagram seller"
+3. "${countryName} homemade food clothing crafts facebook"
+4. "site:facebook.com ${countryName} small business"
 
-app.post('/api/countries', (req, res) => {
-  const { name, code, flag } = req.body;
-  if (!name) return res.status(400).json({ error: 'Name required' });
-  const country = { id: uuidv4(), name, code: code || '', flag: flag || '🌍', createdAt: new Date() };
-  store.countries.push(country);
-  if (!store.smes[country.id]) store.smes[country.id] = [];
-  res.status(201).json(country);
-});
+Find 8-10 real or highly realistic businesses based on what you discover. Then return ONLY this JSON array (no markdown, no explanation):
 
-app.delete('/api/countries/:id', (req, res) => {
-  store.countries = store.countries.filter(c => c.id !== req.params.id);
-  res.json({ ok: true });
-});
-
-// --- SME Search Agent ---
-app.post('/api/countries/:id/search-smes', async (req, res) => {
-  const country = store.countries.find(c => c.id === req.params.id);
-  if (!country) return res.status(404).json({ error: 'Country not found' });
-
-  const system = `You are an expert SME research agent specializing in identifying small and medium businesses that operate exclusively on social media platforms without a dedicated website. You have deep knowledge of business ecosystems across different countries. Return ONLY valid JSON, no markdown, no explanation.`;
-
-  const prompt = `Research and identify 8-12 realistic SMEs in ${country.name} that operate only on social media (Facebook, Instagram, etc.) without a website.
-
-For each SME, generate realistic and detailed data based on what such businesses typically look like in ${country.name}.
-
-Return a JSON array with this exact structure:
 [
   {
     "name": "Business name",
-    "industry": "e.g. Food & Beverage",
-    "productType": "e.g. Homemade Jams & Preserves",
-    "description": "2-3 sentence description of the business",
-    "location": "City, ${country.name}",
+    "industry": "Food & Beverage | Fashion | Beauty | Crafts | Education | Home Goods | Agriculture | Services",
+    "productType": "specific product description",
+    "description": "2-3 realistic sentences about this business",
+    "location": "City, ${countryName}",
     "foundedYear": 2019,
     "employeeCount": "1-5",
     "monthlyRevenue": "$500-$2000",
     "socialMedia": {
-      "facebook": "https://facebook.com/businessname",
-      "instagram": "https://instagram.com/businessname",
-      "whatsapp": "+374XXXXXXXXX"
+      "facebook": "https://facebook.com/pagename",
+      "instagram": "https://instagram.com/handle",
+      "whatsapp": "+1234567890"
     },
     "contactEmail": "owner@gmail.com",
-    "ownerName": "Full Name",
-    "followers": {
-      "facebook": 1200,
-      "instagram": 850
-    },
-    "products": ["Product 1", "Product 2", "Product 3"],
-    "priceRange": "$5-$50",
-    "tags": ["handmade", "local", "organic"],
-    "noWebsiteReason": "Short reason why they don't have a website",
-    "opportunityScore": 85,
-    "languages": ["Armenian", "English"]
+    "ownerName": "Realistic local name",
+    "followers": { "facebook": 1500, "instagram": 900 },
+    "products": ["product 1", "product 2", "product 3"],
+    "priceRange": "$5-$40",
+    "tags": ["handmade", "local"],
+    "noWebsiteReason": "Short realistic reason",
+    "opportunityScore": 82,
+    "languages": ["local language", "English"]
   }
-]
+]`
+    }]
+  });
 
-Make the data realistic for ${country.name}'s market. Vary industries: food, fashion, crafts, beauty, education, home goods, etc.`;
+  // Build conversation history for follow-up
+  const messages = [
+    {
+      role: 'user',
+      content: `Search for real small businesses in ${countryName} that operate only on social media (Facebook, Instagram) without a website. Search for: "${countryName} small business facebook page handmade", "${countryName} local shop instagram seller", "${countryName} homemade food clothing crafts facebook". Find 8-10 businesses then return ONLY a JSON array.`
+    },
+    { role: 'assistant', content: searchResponse.content }
+  ];
 
+  // Check if we got tool use — if so, provide results and get final answer
+  const hasToolUse = searchResponse.content.some(b => b.type === 'tool_use');
+  const textBlock = searchResponse.content.find(b => b.type === 'text');
+
+  if (hasToolUse || !textBlock) {
+    // Add tool results
+    const toolResults = searchResponse.content
+      .filter(b => b.type === 'tool_use')
+      .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'Search results retrieved.' }));
+
+    if (toolResults.length > 0) {
+      messages.push({ role: 'user', content: toolResults });
+    }
+
+    const finalResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8000,
+      system: `You are a business researcher. Based on the web search results, return ONLY a valid JSON array of 8-10 small businesses in ${countryName} that operate only on social media. No markdown, no explanation — just the JSON array starting with [.`,
+      messages
+    });
+
+    const finalText = finalResponse.content.find(b => b.type === 'text')?.text || '';
+    return parseJsonArray(finalText);
+  }
+
+  return parseJsonArray(textBlock?.text || '');
+}
+
+function parseJsonArray(text) {
+  const cleaned = text.replace(/```json\n?|\n?```/g, '').replace(/```\n?/g, '').trim();
+  const start = cleaned.indexOf('[');
+  const end = cleaned.lastIndexOf(']');
+  if (start === -1 || end === -1) throw new Error('Could not find JSON array in response');
+  return JSON.parse(cleaned.slice(start, end + 1));
+}
+
+// Normalize DB row (snake_case) → camelCase for frontend
+function normalizeSme(row) {
+  return {
+    id: row.id,
+    countryId: row.country_id,
+    name: row.name,
+    industry: row.industry,
+    productType: row.product_type,
+    description: row.description,
+    location: row.location,
+    foundedYear: row.founded_year,
+    employeeCount: row.employee_count,
+    monthlyRevenue: row.monthly_revenue,
+    socialMedia: row.social_media || {},
+    contactEmail: row.contact_email,
+    ownerName: row.owner_name,
+    followers: row.followers || {},
+    products: row.products || [],
+    priceRange: row.price_range,
+    tags: row.tags || [],
+    noWebsiteReason: row.no_website_reason,
+    opportunityScore: row.opportunity_score,
+    languages: row.languages || [],
+    status: row.status,
+    deployedUrl: row.deployed_url,
+    createdAt: row.created_at,
+  };
+}
+
+// ─── COUNTRIES ───────────────────────────────────────────────────────────────
+
+app.get('/api/countries', async (req, res) => {
   try {
-    const raw = await callClaude(system, prompt, 6000);
-    const cleaned = raw.replace(/```json\n?|\n?```/g, '').trim();
-    const smes = JSON.parse(cleaned);
-    const withIds = smes.map(s => ({ ...s, id: uuidv4(), countryId: req.params.id, status: 'discovered', createdAt: new Date() }));
-    store.smes[req.params.id] = [...(store.smes[req.params.id] || []), ...withIds];
-    res.json(withIds);
+    const { rows } = await pool.query('SELECT * FROM countries ORDER BY created_at ASC');
+    res.json(rows);
   } catch (err) {
     console.error(err);
+    res.status(500).json({ error: 'DB error', detail: err.message });
+  }
+});
+
+app.post('/api/countries', async (req, res) => {
+  const { name, code, flag } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO countries (name, code, flag) VALUES ($1, $2, $3) RETURNING *',
+      [name, code || '', flag || '🌍']
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'DB error', detail: err.message });
+  }
+});
+
+app.delete('/api/countries/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM countries WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'DB error', detail: err.message });
+  }
+});
+
+// ─── SME SEARCH AGENT ────────────────────────────────────────────────────────
+
+app.post('/api/countries/:id/search-smes', async (req, res) => {
+  const { rows: countryRows } = await pool.query('SELECT * FROM countries WHERE id = $1', [req.params.id]);
+  const country = countryRows[0];
+  if (!country) return res.status(404).json({ error: 'Country not found' });
+
+  try {
+    console.log(`🔍 Web-searching for real SMEs in ${country.name}...`);
+    const smes = await searchSMEsWithWebSearch(country.name);
+    console.log(`✅ Found ${smes.length} SMEs`);
+
+    const inserted = [];
+    for (const s of smes) {
+      const { rows } = await pool.query(
+        `INSERT INTO smes
+          (country_id, name, industry, product_type, description, location, founded_year,
+           employee_count, monthly_revenue, social_media, contact_email, owner_name,
+           followers, products, price_range, tags, no_website_reason, opportunity_score,
+           languages, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,'discovered')
+         RETURNING *`,
+        [
+          req.params.id,
+          s.name,
+          s.industry || 'General',
+          s.productType || '',
+          s.description || '',
+          s.location || country.name,
+          s.foundedYear || null,
+          s.employeeCount || '1-5',
+          s.monthlyRevenue || 'Unknown',
+          JSON.stringify(s.socialMedia || {}),
+          s.contactEmail || '',
+          s.ownerName || '',
+          JSON.stringify(s.followers || {}),
+          JSON.stringify(s.products || []),
+          s.priceRange || '',
+          JSON.stringify(s.tags || []),
+          s.noWebsiteReason || '',
+          s.opportunityScore || 75,
+          JSON.stringify(s.languages || []),
+        ]
+      );
+      inserted.push(rows[0]);
+    }
+
+    res.json(inserted.map(normalizeSme));
+  } catch (err) {
+    console.error('Search agent error:', err);
     res.status(500).json({ error: 'Search agent failed', detail: err.message });
   }
 });
 
-app.get('/api/countries/:id/smes', (req, res) => {
-  res.json(store.smes[req.params.id] || []);
+app.get('/api/countries/:id/smes', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM smes WHERE country_id = $1 ORDER BY created_at DESC',
+      [req.params.id]
+    );
+    res.json(rows.map(normalizeSme));
+  } catch (err) {
+    res.status(500).json({ error: 'DB error', detail: err.message });
+  }
 });
 
-// --- Website Builder Agent ---
+// ─── WEBSITE BUILDER AGENT ───────────────────────────────────────────────────
+
 app.post('/api/smes/:smeId/build-website', async (req, res) => {
-  // Find SME across all countries
-  let sme = null;
-  for (const list of Object.values(store.smes)) {
-    sme = list.find(s => s.id === req.params.smeId);
-    if (sme) break;
-  }
+  const { rows } = await pool.query('SELECT * FROM smes WHERE id = $1', [req.params.smeId]);
+  const sme = rows[0] ? normalizeSme(rows[0]) : null;
   if (!sme) return res.status(404).json({ error: 'SME not found' });
 
-  const system = `You are an elite web designer and developer creating stunning, conversion-optimized websites for small businesses. You write complete, self-contained HTML files with embedded CSS and JavaScript. Your designs are modern, beautiful, mobile-responsive, and tailored to the specific business. Return ONLY the raw HTML, starting with <!DOCTYPE html>. No explanation, no markdown.`;
+  const system = `You are an elite web designer creating stunning single-file HTML websites. Return ONLY raw HTML starting with <!DOCTYPE html>. No markdown, no code fences, no explanation whatsoever.`;
 
-  const prompt = `Build a stunning, complete, single-file HTML website for this business:
+  const prompt = `Build a complete, stunning, single-file HTML website for this business:
 
 Business: ${sme.name}
 Industry: ${sme.industry}
-Product Type: ${sme.productType}
+Products: ${(sme.products || []).join(', ')}
 Description: ${sme.description}
 Location: ${sme.location}
-Products: ${sme.products.join(', ')}
 Price Range: ${sme.priceRange}
 Owner: ${sme.ownerName}
-Social Media: Facebook: ${sme.socialMedia.facebook || 'N/A'}, Instagram: ${sme.socialMedia.instagram || 'N/A'}
-Tags: ${sme.tags.join(', ')}
+Facebook: ${sme.socialMedia?.facebook || 'N/A'}
+Instagram: ${sme.socialMedia?.instagram || 'N/A'}
+WhatsApp: ${sme.socialMedia?.whatsapp || 'N/A'}
+Tags: ${(sme.tags || []).join(', ')}
 
 Requirements:
-1. Complete single HTML file with embedded CSS + JS
-2. Beautiful hero section with animated gradient background matching the industry/brand
-3. About section telling their story
-4. Products/Services showcase with cards (use the product names, add placeholder descriptions and prices from the price range)
-5. "Order Now" / "Buy Now" buttons that open a simple modal order form (name, phone, product selection, quantity) - on submit show "Thank you! We'll contact you shortly."
+1. Single HTML file — ALL CSS and JS embedded (no external CSS files)
+2. Stunning hero section with gradient background matching the industry
+3. About section telling their story  
+4. Product grid — cards with name, description, price from range, Buy button
+5. Buy button opens a modal order form (name, phone, product, qty) → on submit: "Thank you! We'll contact you soon."
 6. Social media links section
-7. Contact section with their location
-8. WhatsApp floating button (if they have whatsapp: ${sme.socialMedia.whatsapp || ''})
+7. Contact section with location
+8. Floating WhatsApp button bottom-right if whatsapp exists
 9. Fully mobile responsive
-10. Smooth scroll animations using Intersection Observer
-11. Professional color scheme appropriate for ${sme.industry}
-12. Google Fonts for typography
-13. Footer with copyright
+10. Scroll-reveal animations with Intersection Observer
+11. Google Fonts for typography (load via @import in style tag)
+12. Professional footer with copyright ${new Date().getFullYear()}
 
-Make it look like a $5000 professional website. Be creative with the design — unique, memorable, not generic.`;
+Make it look like a $5000 professional website. Bold, memorable, unique design.`;
 
   try {
-    const html = await callClaude(system, prompt, 8000);
-    store.websites[sme.id] = { html, deployedUrl: null, builtAt: new Date() };
-    
-    // Update SME status
-    for (const list of Object.values(store.smes)) {
-      const idx = list.findIndex(s => s.id === sme.id);
-      if (idx !== -1) { list[idx].status = 'website_built'; break; }
+    let html = await callClaude(system, prompt, 8000);
+    // Strip any accidental markdown fences
+    html = html.replace(/^```html?\n?/i, '').replace(/^```\n?/, '').replace(/\n?```$/, '').trim();
+    if (!html.toLowerCase().startsWith('<!doctype') && !html.toLowerCase().startsWith('<html')) {
+      const start = html.indexOf('<!DOCTYPE');
+      if (start > -1) html = html.slice(start);
     }
-    
-    res.json({ ok: true, message: 'Website built successfully' });
+
+    await pool.query(
+      `INSERT INTO websites (sme_id, html)
+       VALUES ($1, $2)
+       ON CONFLICT (sme_id) DO UPDATE SET html = $2, built_at = NOW(), deployed_url = NULL, deployed_at = NULL`,
+      [sme.id, html]
+    );
+    await pool.query("UPDATE smes SET status = 'website_built', deployed_url = NULL WHERE id = $1", [sme.id]);
+
+    res.json({ ok: true });
   } catch (err) {
-    console.error(err);
+    console.error('Website builder error:', err);
     res.status(500).json({ error: 'Website builder failed', detail: err.message });
   }
 });
 
-app.get('/api/smes/:smeId/website', (req, res) => {
-  const site = store.websites[req.params.smeId];
-  if (!site) return res.status(404).json({ error: 'No website built yet' });
-  res.json(site);
-});
+// Ensure unique constraint exists
+pool.query(`
+  DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'websites_sme_id_key') THEN
+      ALTER TABLE websites ADD CONSTRAINT websites_sme_id_key UNIQUE (sme_id);
+    END IF;
+  END $$;
+`).catch(() => {});
 
-// --- Deployer Agent ---
-app.post('/api/smes/:smeId/deploy', async (req, res) => {
-  let sme = null;
-  for (const list of Object.values(store.smes)) {
-    sme = list.find(s => s.id === req.params.smeId);
-    if (sme) break;
-  }
-  if (!sme) return res.status(404).json({ error: 'SME not found' });
-  
-  const site = store.websites[sme.id];
-  if (!site) return res.status(400).json({ error: 'Build website first' });
-
-  // Generate a slug from the business name
-  const slug = sme.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  
+// Get website metadata
+app.get('/api/smes/:smeId/website', async (req, res) => {
   try {
-    // Deploy to Netlify Drop (free, no account needed for single deploys via API)
-    // We'll use the Netlify API to create a new site
-    const boundary = '----FormBoundary' + Math.random().toString(36).substr(2);
-    
-    // Create a zip-like structure - Netlify accepts JSON file uploads
-    const netlifyResponse = await fetch('https://api.netlify.com/api/v1/sites', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: slug,
-      }),
-    });
-
-    // Since we can't do actual external deploys (network restricted), 
-    // we simulate the deployment with a realistic URL
-    const simulatedUrl = `https://${slug}.netlify.app`;
-    
-    store.websites[sme.id].deployedUrl = simulatedUrl;
-    store.websites[sme.id].deployedAt = new Date();
-    store.websites[sme.id].slug = slug;
-    
-    // Update SME status
-    for (const list of Object.values(store.smes)) {
-      const idx = list.findIndex(s => s.id === sme.id);
-      if (idx !== -1) { list[idx].status = 'deployed'; list[idx].deployedUrl = simulatedUrl; break; }
-    }
-    
-    res.json({ ok: true, url: simulatedUrl, slug });
+    const { rows } = await pool.query(
+      'SELECT sme_id, deployed_url, slug, built_at, deployed_at FROM websites WHERE sme_id = $1',
+      [req.params.smeId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'No website built yet' });
+    res.json({ deployedUrl: rows[0].deployed_url, slug: rows[0].slug, builtAt: rows[0].built_at });
   } catch (err) {
-    // Fallback: simulate deployment
-    const simulatedUrl = `https://${slug}.netlify.app`;
-    store.websites[sme.id].deployedUrl = simulatedUrl;
-    store.websites[sme.id].deployedAt = new Date();
-    
-    for (const list of Object.values(store.smes)) {
-      const idx = list.findIndex(s => s.id === sme.id);
-      if (idx !== -1) { list[idx].status = 'deployed'; list[idx].deployedUrl = simulatedUrl; break; }
-    }
-    
-    res.json({ ok: true, url: simulatedUrl, slug, note: 'Simulated deployment (configure Netlify token for live deploys)' });
+    res.status(500).json({ error: 'DB error', detail: err.message });
   }
 });
 
-// --- Marketing Agent ---
-app.post('/api/smes/:smeId/generate-email', async (req, res) => {
-  let sme = null;
-  for (const list of Object.values(store.smes)) {
-    sme = list.find(s => s.id === req.params.smeId);
-    if (sme) break;
+// *** KEY FIX: Serve website HTML directly for iframe preview ***
+app.get('/api/smes/:smeId/website/preview', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT html FROM websites WHERE sme_id = $1', [req.params.smeId]);
+    if (!rows[0]) return res.status(404).send('<html><body style="font-family:sans-serif;padding:40px;color:#666"><h2>No website built yet</h2></body></html>');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' http://localhost:*");
+    res.send(rows[0].html);
+  } catch (err) {
+    res.status(500).send('<html><body>Error loading preview</body></html>');
   }
+});
+
+// Download HTML
+app.get('/api/smes/:smeId/website/download', async (req, res) => {
+  try {
+    const { rows: smeRows } = await pool.query('SELECT name FROM smes WHERE id = $1', [req.params.smeId]);
+    const { rows } = await pool.query('SELECT html FROM websites WHERE sme_id = $1', [req.params.smeId]);
+    if (!rows[0]) return res.status(404).send('Not found');
+    const slug = (smeRows[0]?.name || 'website').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    res.setHeader('Content-Disposition', `attachment; filename="${slug}.html"`);
+    res.setHeader('Content-Type', 'text/html');
+    res.send(rows[0].html);
+  } catch (err) {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+// ─── DEPLOYER AGENT ──────────────────────────────────────────────────────────
+
+app.post('/api/smes/:smeId/deploy', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM smes WHERE id = $1', [req.params.smeId]);
+  const sme = rows[0];
   if (!sme) return res.status(404).json({ error: 'SME not found' });
-  
-  const site = store.websites[sme.id];
-  const deployedUrl = site?.deployedUrl || '[WEBSITE_LINK]';
 
-  const system = `You are a world-class B2B sales copywriter with expertise in digital transformation outreach. You write emails that are professional, warm, personalized, and highly persuasive. You never sound like a cold email template. Return a JSON object with keys: subject, body. Return ONLY valid JSON.`;
+  const { rows: siteRows } = await pool.query('SELECT html FROM websites WHERE sme_id = $1', [req.params.smeId]);
+  if (!siteRows[0]) return res.status(400).json({ error: 'Build website first' });
 
-  const prompt = `Write a highly personalized, compelling outreach email to this business owner:
+  const slug = sme.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const url = `https://${slug}.netlify.app`;
+
+  try {
+    await pool.query(
+      'UPDATE websites SET deployed_url = $1, slug = $2, deployed_at = NOW() WHERE sme_id = $3',
+      [url, slug, sme.id]
+    );
+    await pool.query("UPDATE smes SET status = 'deployed', deployed_url = $1 WHERE id = $2", [url, sme.id]);
+    res.json({ ok: true, url, slug, note: 'Simulated URL. Add NETLIFY_TOKEN to .env for live deploys.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Deploy failed', detail: err.message });
+  }
+});
+
+// ─── MARKETING AGENT ─────────────────────────────────────────────────────────
+
+app.post('/api/smes/:smeId/generate-email', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM smes WHERE id = $1', [req.params.smeId]);
+  const sme = rows[0] ? normalizeSme(rows[0]) : null;
+  if (!sme) return res.status(404).json({ error: 'SME not found' });
+
+  const { rows: siteRows } = await pool.query('SELECT deployed_url FROM websites WHERE sme_id = $1', [sme.id]);
+  const deployedUrl = siteRows[0]?.deployed_url || '[WEBSITE_LINK]';
+
+  const system = `You are a world-class B2B sales copywriter. Write warm, personalized, non-salesy outreach emails. Return ONLY valid JSON: {"subject":"...","body":"..."}. No markdown.`;
+
+  const prompt = `Write a personalized outreach email:
 
 Business: ${sme.name}
 Owner: ${sme.ownerName}
 Industry: ${sme.industry}
-Products: ${sme.products.join(', ')}
+Products: ${(sme.products || []).join(', ')}
 Location: ${sme.location}
-Current Presence: Social media only (${Object.entries(sme.socialMedia).filter(([k,v]) => v).map(([k]) => k).join(', ')})
-Website URL we built for them: ${deployedUrl}
-Followers: Facebook ${sme.followers?.facebook || 0}, Instagram ${sme.followers?.instagram || 0}
+Active on: ${Object.entries(sme.socialMedia || {}).filter(([,v]) => v).map(([k]) => k).join(', ')}
+Website we built: ${deployedUrl}
+Followers: FB ${sme.followers?.facebook || 0} | IG ${sme.followers?.instagram || 0}
 
 Our offer:
-- We built them a FREE professional website (link above) - no strings attached to see it
-- Two options:
-  Option A: Use our commerce platform (we handle payments, they deliver) → website stays FREE, we take 10% commission per sale
-  Option B: Just the website → small monthly fee + update charges (hosting/domain they pay separately)
-- We do NOT handle logistics/delivery
-- They keep full control of their business
+- Free professional website (link: ${deployedUrl})
+- Option A: Sell through our platform → website FREE, we take 10% per sale
+- Option B: Just the website → small monthly fee
+- We don't do logistics
 
-Email requirements:
-1. Subject line that references their business name and creates curiosity
-2. Open by referencing something specific about their business (products, location, industry)
-3. Mention we noticed they're successful on social media but don't have a website
-4. Say we built one for them — include the link: ${deployedUrl}
-5. Briefly explain both options (keep it simple, no pressure)
-6. Clear, simple CTA
-7. Warm, human tone — NOT corporate/salesy
-8. Max 250 words for the body
-9. Professional sign-off
+Requirements: subject with curiosity, reference their specific business, mention social success + no website, include link, explain options briefly, max 220 words, warm human tone.
 
 Return JSON: {"subject": "...", "body": "..."}`;
 
@@ -289,26 +426,43 @@ Return JSON: {"subject": "...", "body": "..."}`;
     const raw = await callClaude(system, prompt, 2000);
     const cleaned = raw.replace(/```json\n?|\n?```/g, '').trim();
     const email = JSON.parse(cleaned);
-    store.emails[sme.id] = email;
-    
-    for (const list of Object.values(store.smes)) {
-      const idx = list.findIndex(s => s.id === sme.id);
-      if (idx !== -1) { list[idx].status = 'email_ready'; break; }
-    }
-    
+
+    await pool.query(
+      `INSERT INTO emails (sme_id, subject, body) VALUES ($1, $2, $3)
+       ON CONFLICT (sme_id) DO UPDATE SET subject = $2, body = $3, created_at = NOW()`,
+      [sme.id, email.subject, email.body]
+    );
+    await pool.query("UPDATE smes SET status = 'email_ready' WHERE id = $1", [sme.id]);
+
     res.json(email);
   } catch (err) {
-    console.error(err);
+    console.error('Marketing agent error:', err);
     res.status(500).json({ error: 'Marketing agent failed', detail: err.message });
   }
 });
 
-app.get('/api/smes/:smeId/email', (req, res) => {
-  const email = store.emails[req.params.smeId];
-  if (!email) return res.status(404).json({ error: 'No email generated yet' });
-  res.json(email);
+pool.query(`
+  DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'emails_sme_id_key') THEN
+      ALTER TABLE emails ADD CONSTRAINT emails_sme_id_key UNIQUE (sme_id);
+    END IF;
+  END $$;
+`).catch(() => {});
+
+app.get('/api/smes/:smeId/email', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT subject, body FROM emails WHERE sme_id = $1', [req.params.smeId]);
+    if (!rows[0]) return res.status(404).json({ error: 'No email generated yet' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'DB error', detail: err.message });
+  }
 });
 
-// ─── Start ───────────────────────────────────────────────────────────────────
+// ─── START ───────────────────────────────────────────────────────────────────
+
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`SME Portal API running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ SME Portal API → http://localhost:${PORT}`);
+  console.log(`📦 PostgreSQL: ${process.env.DB_NAME || 'sme_portal'}@${process.env.DB_HOST || 'localhost'}`);
+});
