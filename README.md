@@ -57,6 +57,8 @@ PORT=3001
 ```bash
 cd backend
 npm install
+npm run db:init
+
 ```
 
 ### 4. Start the Backend

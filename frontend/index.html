@@ -1169,7 +1169,7 @@ function renderWebsiteTab(sme) {
       <div class="empty-state">
         <div class="empty-icon">🔨</div>
         <div class="empty-title">No website built yet</div>
-        <div class="empty-sub">Click "Build Website" to run the Website Builder Agent. It will create a tailored, professional website using all available information about this business.</div>
+        <div class="empty-sub">Click "Build Website" to run the Website Builder Agent.</div>
         <button class="btn btn-primary" onclick="buildWebsite('${sme.id}')">🔨 Build Website</button>
       </div>
     `;
@@ -1177,13 +1177,13 @@ function renderWebsiteTab(sme) {
   }
 
   const deployedUrl = site.deployedUrl || null;
-  const blob = new Blob([site.html], { type: 'text/html' });
-  const blobUrl = URL.createObjectURL(blob);
+  const previewUrl = `${API}/smes/${sme.id}/website/preview?t=${Date.now()}`;
+  const downloadUrl = `${API}/smes/${sme.id}/website/download`;
 
   el.innerHTML = `
     ${deployedUrl ? `
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 16px;background:#43e97b10;border:1px solid #43e97b30;border-radius:10px;font-size:13px">
-        ✅ <strong>Deployed:</strong> 
+        ✅ <strong>Deployed:</strong>
         <a href="${deployedUrl}" target="_blank" style="color:var(--success)">${deployedUrl}</a>
         <button class="copy-btn" onclick="copyText('${deployedUrl}')">Copy</button>
       </div>
@@ -1195,12 +1195,18 @@ function renderWebsiteTab(sme) {
           <div class="browser-dot dot-yellow"></div>
           <div class="browser-dot dot-green"></div>
         </div>
-        <div class="browser-url">${deployedUrl || blobUrl.substring(0, 60) + '...'}</div>
+        <div class="browser-url">${deployedUrl || (API + '/smes/' + sme.id + '/website/preview')}</div>
       </div>
-      <iframe class="website-iframe" src="${blobUrl}" sandbox="allow-scripts allow-same-origin allow-forms"></iframe>
+      <iframe
+        class="website-iframe"
+        src="${previewUrl}"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        loading="lazy"
+      ></iframe>
     </div>
     <div style="display:flex;gap:10px;margin-top:12px">
-      <button class="btn btn-secondary btn-sm" onclick="downloadHtml('${sme.id}', '${sme.name}')">⬇️ Download HTML</button>
+      <a class="btn btn-secondary btn-sm" href="${downloadUrl}" target="_blank">⬇️ Download HTML</a>
+      <a class="btn btn-secondary btn-sm" href="${previewUrl}" target="_blank">↗️ Open Full Tab</a>
       <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')">🔄 Rebuild</button>
       ${!deployedUrl ? `<button class="btn btn-success btn-sm" onclick="deploySite('${sme.id}')">🚀 Deploy Site</button>` : ''}
     </div>
