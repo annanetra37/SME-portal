@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>WebLaunch — SME Growth Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,700;12..96,800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+/* ── Reset & Tokens ───────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07080d;
+  --s1:#0d0f18;
+  --s2:#131622;
+  --s3:#1a1d2e;
+  --border:rgba(255,255,255,.07);
+  --border2:rgba(255,255,255,.12);
+  --a:#7c6dfa;
+  --a2:#fa6d8e;
+  --a3:#4adeaa;
+  --warn:#f5c842;
+  --text:#dde0f5;
+  --muted:#616488;
+  --muted2:#888baa;
+  --danger:#f55;
+  --r:12px;
+  --r2:18px;
+  --shadow:0 4px 24px rgba(0,0,0,.5);
+}
+html,body{height:100%;overflow:hidden}
+body{font-family:'Bricolage Grotesque',sans-serif;background:var(--bg);color:var(--text);display:flex}
+a{color:var(--a);text-decoration:none}
+a:hover{text-decoration:underline}
+button{cursor:pointer;font-family:inherit}
+input{font-family:inherit}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:99px}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────── */
+.sidebar{
+  width:248px;min-width:248px;
+  background:var(--s1);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  height:100vh;
+  position:relative;overflow:hidden;
+}
+.sidebar::before{
+  content:'';position:absolute;
+  top:-80px;left:-80px;
+  width:260px;height:260px;
+  background:radial-gradient(circle,rgba(124,109,250,.15),transparent 70%);
+  pointer-events:none;
+}
+.logo{padding:22px 20px 18px;border-bottom:1px solid var(--border)}
+.logo-mark{font-size:21px;font-weight:800;letter-spacing:-.5px}
+.logo-mark em{font-style:normal;color:var(--a)}
+.logo-sub{font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:3px}
+.nav{flex:1;padding:12px 0;overflow-y:auto}
+.nav-sec{padding:0 12px;margin-bottom:4px}
+.nav-lbl{font-size:9.5px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);padding:8px 10px 4px}
+.nav-item{
+  display:flex;align-items:center;gap:9px;
+  padding:9px 12px;border-radius:var(--r);
+  cursor:pointer;color:var(--muted2);font-size:13.5px;font-weight:500;
+  transition:all .18s;user-select:none;
+}
+.nav-item:hover{background:var(--s2);color:var(--text)}
+.nav-item.active{background:rgba(124,109,250,.12);color:var(--a)}
+.nav-item .ni{font-size:15px;width:18px;text-align:center}
+.c-list{padding:0 12px}
+.c-item{
+  display:flex;align-items:center;gap:9px;
+  padding:8px 12px;border-radius:var(--r);
+  cursor:pointer;color:var(--muted2);font-size:13px;
+  transition:all .18s;
+}
+.c-item:hover{background:var(--s2);color:var(--text)}
+.c-item.active{background:rgba(124,109,250,.1);color:var(--text)}
+.c-item .cflag{font-size:17px}
+.c-item .cbadge{margin-left:auto;font-size:10px;background:var(--s3);color:var(--muted2);padding:2px 7px;border-radius:99px}
+.add-btn{
+  margin:8px 12px;width:calc(100% - 24px);
+  display:flex;align-items:center;gap:8px;padding:9px 12px;
+  border:1px dashed var(--border2);border-radius:var(--r);
+  background:transparent;color:var(--muted2);font-size:13px;
+  transition:all .18s;
+}
+.add-btn:hover{border-color:var(--a);color:var(--a);background:rgba(124,109,250,.05)}
+
+/* ── Main ─────────────────────────────────────────────────────────────── */
+.main{flex:1;display:flex;flex-direction:column;height:100vh;overflow:hidden;min-width:0}
+.topbar{
+  padding:18px 28px;
+  border-bottom:1px solid var(--border);
+  background:var(--s1);
+  display:flex;align-items:center;gap:14px;
+  flex-shrink:0;
+}
+.tb-title{flex:1;min-width:0}
+.tb-title h1{font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-title p{font-size:12px;color:var(--muted2);margin-top:1px}
+.tb-actions{display:flex;gap:8px;flex-shrink:0}
+.content{flex:1;overflow-y:auto;padding:28px}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:9px 18px;border-radius:var(--r);
+  font-size:13px;font-weight:600;border:none;
+  transition:all .18s;white-space:nowrap;
+}
+.btn-primary{background:var(--a);color:#fff}
+.btn-primary:hover{background:#8f81fb;transform:translateY(-1px);box-shadow:0 4px 18px rgba(124,109,250,.4)}
+.btn-ghost{background:var(--s2);color:var(--text);border:1px solid var(--border2)}
+.btn-ghost:hover{background:var(--s3)}
+.btn-success{background:rgba(74,222,170,.1);color:var(--a3);border:1px solid rgba(74,222,170,.25)}
+.btn-success:hover{background:rgba(74,222,170,.18)}
+.btn-danger{background:rgba(255,85,85,.1);color:var(--danger);border:1px solid rgba(255,85,85,.25)}
+.btn-sm{padding:6px 13px;font-size:12px}
+.btn:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+
+/* ── Views ────────────────────────────────────────────────────────────── */
+.view{display:none}
+.view.active{display:block}
+
+/* ── Dashboard ────────────────────────────────────────────────────────── */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}
+.stat-card{
+  background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);
+  padding:22px;position:relative;overflow:hidden;
+}
+.stat-card::after{
+  content:'';position:absolute;top:-20px;right:-20px;
+  width:80px;height:80px;border-radius:50%;opacity:.1;
+}
+.stat-card:nth-child(1)::after{background:var(--a)}
+.stat-card:nth-child(2)::after{background:var(--a2)}
+.stat-card:nth-child(3)::after{background:var(--a3)}
+.stat-card:nth-child(4)::after{background:var(--warn)}
+.stat-icon{font-size:20px;margin-bottom:10px}
+.stat-val{font-size:34px;font-weight:800;line-height:1}
+.stat-lbl{font-size:11px;color:var(--muted2);margin-top:5px;text-transform:uppercase;letter-spacing:.5px}
+
+/* ── SME Grid ─────────────────────────────────────────────────────────── */
+.sme-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.sme-card{
+  background:var(--s1);border:1px solid var(--border);
+  border-radius:var(--r2);padding:18px;cursor:pointer;
+  transition:all .22s;position:relative;overflow:hidden;
+}
+.sme-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2.5px;
+  background:linear-gradient(90deg,var(--a),var(--a2));
+  transform:scaleX(0);transform-origin:left;transition:transform .22s;
+}
+.sme-card:hover{border-color:rgba(124,109,250,.3);transform:translateY(-2px);box-shadow:var(--shadow)}
+.sme-card:hover::before{transform:scaleX(1)}
+.sme-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px}
+.sme-ava{
+  width:46px;height:46px;border-radius:11px;flex-shrink:0;
+  background:linear-gradient(135deg,var(--a),var(--a2));
+  display:flex;align-items:center;justify-content:center;font-size:20px;
+}
+.sme-nm{font-size:14.5px;font-weight:700;margin-bottom:2px}
+.sme-pt{font-size:11.5px;color:var(--muted2)}
+.sme-badge{
+  margin-left:auto;flex-shrink:0;font-size:9.5px;font-weight:700;
+  padding:3px 9px;border-radius:99px;letter-spacing:.5px;text-transform:uppercase;
+}
+.st-disc{background:rgba(97,100,136,.15);color:var(--muted2)}
+.st-web{background:rgba(124,109,250,.15);color:var(--a)}
+.st-dep{background:rgba(74,222,170,.15);color:var(--a3)}
+.st-eml{background:rgba(245,200,66,.15);color:var(--warn)}
+.sme-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px}
+.tag{font-size:10.5px;padding:2px 8px;border-radius:99px;background:var(--s3);color:var(--muted2);border:1px solid var(--border)}
+.sme-metrics{display:flex;gap:14px;font-size:11.5px;color:var(--muted2);margin-bottom:12px}
+.sme-social{display:flex;gap:6px;padding-top:10px;border-top:1px solid var(--border);flex-wrap:wrap}
+.spill{font-size:10.5px;padding:3px 9px;border-radius:99px;background:var(--s2);color:var(--muted2);border:1px solid var(--border)}
+.opp-bar{margin-top:10px}
+.opp-lbl{display:flex;justify-content:space-between;font-size:10px;color:var(--muted2);margin-bottom:4px}
+.bar-track{height:3px;background:var(--s3);border-radius:99px;overflow:hidden}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--a),var(--a2));border-radius:99px;transition:width 1.2s cubic-bezier(.4,0,.2,1)}
+
+/* ── Detail Drawer ────────────────────────────────────────────────────── */
+.overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(5px);
+  z-index:100;opacity:0;pointer-events:none;transition:opacity .3s;
+}
+.overlay.open{opacity:1;pointer-events:all}
+.drawer{
+  position:fixed;top:0;right:0;width:700px;max-width:100vw;height:100vh;
+  background:var(--s1);border-left:1px solid var(--border);
+  z-index:101;display:flex;flex-direction:column;
+  transform:translateX(100%);transition:transform .32s cubic-bezier(.16,1,.3,1);
+  overflow:hidden;
+}
+.drawer.open{transform:translateX(0)}
+.drawer-hdr{
+  padding:22px 26px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;gap:14px;flex-shrink:0;
+}
+.drawer-ava{
+  width:60px;height:60px;border-radius:14px;flex-shrink:0;
+  background:linear-gradient(135deg,var(--a),var(--a2));
+  display:flex;align-items:center;justify-content:center;font-size:26px;
+}
+.drawer-name{font-size:20px;font-weight:800}
+.drawer-sub{font-size:12px;color:var(--muted2);margin-top:3px}
+.drawer-close{
+  margin-left:auto;background:var(--s2);border:1px solid var(--border);color:var(--muted2);
+  width:34px;height:34px;border-radius:9px;font-size:16px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.drawer-close:hover{color:var(--text);background:var(--s3)}
+.drawer-acts{
+  padding:14px 26px;display:flex;gap:8px;flex-wrap:wrap;
+  border-bottom:1px solid var(--border);flex-shrink:0;background:var(--s1);
+}
+.dtabs{
+  display:flex;gap:2px;padding:10px 26px 0;
+  border-bottom:1px solid var(--border);flex-shrink:0;
+}
+.dtab{
+  padding:8px 16px;border-radius:7px 7px 0 0;font-size:13px;
+  cursor:pointer;color:var(--muted2);border-bottom:2px solid transparent;
+  transition:all .15s;margin-bottom:-1px;font-weight:500;
+}
+.dtab.active{color:var(--a);border-color:var(--a)}
+.dtab:hover:not(.active){color:var(--text)}
+.drawer-body{flex:1;overflow-y:auto;padding:22px 26px}
+.dpane{display:none}
+.dpane.active{display:block}
+
+/* ── Info Grid ────────────────────────────────────────────────────────── */
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+.info-cell{background:var(--s2);border-radius:var(--r);padding:12px 14px;border:1px solid var(--border)}
+.info-lbl{font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px}
+.info-val{font-size:13.5px;font-weight:500}
+.chip-list{display:flex;flex-wrap:wrap;gap:7px}
+.chip{padding:5px 12px;border-radius:99px;background:var(--s2);border:1px solid var(--border);font-size:12.5px}
+hr.div{border:none;border-top:1px solid var(--border);margin:16px 0}
+
+/* ── Website Preview ──────────────────────────────────────────────────── */
+.browser{background:var(--s2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.browser-bar{padding:10px 14px;background:var(--s3);display:flex;align-items:center;gap:9px}
+.bdots{display:flex;gap:5px}
+.bdot{width:9px;height:9px;border-radius:50%}
+.bd-r{background:#ff5f57}.bd-y{background:#febc2e}.bd-g{background:#28c840}
+.burl{flex:1;background:var(--s2);border-radius:5px;padding:4px 11px;font-size:11.5px;color:var(--muted2);font-family:'DM Mono',monospace}
+.website-iframe{width:100%;height:480px;border:none;display:block}
+
+/* ── Email ────────────────────────────────────────────────────────────── */
+.email-wrap{background:var(--s2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.email-hdr{padding:14px 18px;border-bottom:1px solid var(--border);background:var(--s3)}
+.email-row{display:flex;gap:10px;font-size:12.5px;margin-bottom:3px}
+.email-lbl{color:var(--muted2);min-width:55px;font-size:11.5px}
+.email-body-txt{padding:18px;font-size:13.5px;line-height:1.75;white-space:pre-wrap}
+
+/* ── Modal ────────────────────────────────────────────────────────────── */
+.modal-bg{
+  position:fixed;inset:0;background:rgba(0,0,0,.65);backdrop-filter:blur(7px);
+  z-index:200;display:flex;align-items:center;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.modal-bg.open{opacity:1;pointer-events:all}
+.modal{
+  background:var(--s2);border:1px solid var(--border2);border-radius:20px;
+  padding:30px;width:440px;max-width:calc(100vw - 32px);
+  transform:scale(.92) translateY(18px);
+  transition:transform .28s cubic-bezier(.16,1,.3,1);
+}
+.modal-bg.open .modal{transform:scale(1) translateY(0)}
+.modal h2{font-size:19px;font-weight:800;margin-bottom:5px}
+.modal p{font-size:13px;color:var(--muted2);margin-bottom:22px}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:10.5px;color:var(--muted2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:7px}
+.fg input{
+  width:100%;background:var(--s3);border:1px solid var(--border2);
+  border-radius:var(--r);padding:10px 13px;font-size:13.5px;color:var(--text);
+  outline:none;transition:border-color .15s;
+}
+.fg input:focus{border-color:var(--a)}
+.fg input::placeholder{color:var(--muted)}
+.modal-foot{display:flex;gap:9px;justify-content:flex-end;margin-top:22px}
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+.toasts{position:fixed;top:20px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast{
+  padding:12px 18px;border-radius:11px;font-size:13px;font-weight:500;
+  display:flex;align-items:center;gap:9px;
+  box-shadow:0 4px 20px rgba(0,0,0,.6);
+  animation:tin .28s ease;
+}
+@keyframes tin{from{transform:translateX(60px);opacity:0}to{transform:translateX(0);opacity:1}}
+.t-ok{background:#0b2218;border:1px solid rgba(74,222,170,.3);color:var(--a3)}
+.t-err{background:#220b0b;border:1px solid rgba(255,85,85,.3);color:var(--danger)}
+.t-info{background:#100e24;border:1px solid rgba(124,109,250,.3);color:var(--a)}
+
+/* ── Spinner ──────────────────────────────────────────────────────────── */
+.spin{
+  width:16px;height:16px;border:2px solid transparent;
+  border-top-color:currentColor;border-radius:50%;
+  animation:rot .6s linear infinite;display:inline-block;
+}
+@keyframes rot{to{transform:rotate(360deg)}}
+.agent-bar{
+  display:flex;align-items:center;gap:12px;
+  padding:14px 18px;background:rgba(124,109,250,.08);
+  border:1px solid rgba(124,109,250,.2);border-radius:var(--r);
+  font-size:13px;color:var(--a);margin-bottom:18px;
+  animation:pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+
+/* ── Empty ────────────────────────────────────────────────────────────── */
+.empty{text-align:center;padding:70px 30px;color:var(--muted2)}
+.empty-ico{font-size:44px;margin-bottom:14px}
+.empty h3{font-size:19px;font-weight:700;color:var(--text);margin-bottom:7px}
+.empty p{font-size:13.5px;line-height:1.6;max-width:360px;margin:0 auto 20px}
+
+/* ── Pipeline ─────────────────────────────────────────────────────────── */
+.pipeline{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.pip-col{background:var(--s1);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.pip-hdr{
+  padding:13px 15px;border-bottom:1px solid var(--border);
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+  display:flex;align-items:center;gap:7px;
+}
+.pip-dot{width:7px;height:7px;border-radius:50%}
+.pip-cnt{margin-left:auto;background:var(--s2);padding:2px 8px;border-radius:99px;font-size:10px}
+.pip-items{padding:10px;display:flex;flex-direction:column;gap:8px;min-height:80px}
+.pip-card{
+  background:var(--s2);border-radius:9px;padding:11px;font-size:12px;
+  cursor:pointer;transition:all .18s;border:1px solid transparent;
+}
+.pip-card:hover{border-color:var(--a);transform:translateY(-1px)}
+.pip-card-nm{font-weight:700;font-size:12.5px;margin-bottom:3px}
+.pip-card-meta{color:var(--muted2)}
+.pip-empty{color:var(--muted);font-size:11.5px;text-align:center;padding:18px}
+
+/* ── Copy btn ─────────────────────────────────────────────────────────── */
+.copy-btn{
+  background:var(--s2);border:1px solid var(--border);color:var(--muted2);
+  padding:3px 9px;border-radius:6px;font-size:10.5px;transition:all .15s;cursor:pointer;
+}
+.copy-btn:hover{border-color:var(--a);color:var(--a)}
+
+/* ── Deployed banner ──────────────────────────────────────────────────── */
+.dep-banner{
+  display:flex;align-items:center;gap:10px;
+  margin-bottom:14px;padding:11px 15px;
+  background:rgba(74,222,170,.07);border:1px solid rgba(74,222,170,.2);
+  border-radius:var(--r);font-size:12.5px;
+}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">Web<em>Launch</em></div>
+    <div class="logo-sub">SME Growth Portal</div>
+  </div>
+  <nav class="nav">
+    <div class="nav-sec">
+      <div class="nav-lbl">Overview</div>
+      <div class="nav-item active" data-view="dashboard">
+        <span class="ni">⚡</span> Dashboard
+      </div>
+      <div class="nav-item" data-view="pipeline">
+        <span class="ni">🔀</span> Pipeline
+      </div>
+    </div>
+    <div class="nav-sec">
+      <div class="nav-lbl">Markets</div>
+      <div class="c-list" id="cList"></div>
+      <button class="add-btn" id="openAddCountry">
+        <span>＋</span> Add Country
+      </button>
+    </div>
+  </nav>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+  <div class="topbar">
+    <div class="tb-title">
+      <h1 id="tbTitle">Dashboard</h1>
+      <p id="tbSub">Overview of your SME pipeline</p>
+    </div>
+    <div class="tb-actions" id="tbActions">
+      <button class="btn btn-primary" id="openAddCountry2">＋ Add Country</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <!-- Dashboard -->
+    <div class="view active" id="view-dashboard">
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-icon">🌍</div><div class="stat-val" id="s-countries">0</div><div class="stat-lbl">Countries</div></div>
+        <div class="stat-card"><div class="stat-icon">🏪</div><div class="stat-val" id="s-smes">0</div><div class="stat-lbl">SMEs Found</div></div>
+        <div class="stat-card"><div class="stat-icon">🌐</div><div class="stat-val" id="s-sites">0</div><div class="stat-lbl">Websites Built</div></div>
+        <div class="stat-card"><div class="stat-icon">✉️</div><div class="stat-val" id="s-emails">0</div><div class="stat-lbl">Emails Ready</div></div>
+      </div>
+      <div id="dashMain">
+        <div class="empty">
+          <div class="empty-ico">🚀</div>
+          <h3>Welcome to WebLaunch</h3>
+          <p>Add a country, discover social-media-only SMEs, build them websites, and send personalised outreach — all in one place.</p>
+          <button class="btn btn-primary" id="openAddCountry3">＋ Add Your First Country</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Country -->
+    <div class="view" id="view-country">
+      <div id="agentBar"></div>
+      <div class="sme-grid" id="smeGrid"></div>
+      <div id="smeEmpty"></div>
+    </div>
+
+    <!-- Pipeline -->
+    <div class="view" id="view-pipeline">
+      <div class="pipeline" id="pipeBoard"></div>
+    </div>
+  </div>
+</main>
+
+<!-- DETAIL DRAWER -->
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-hdr">
+    <div class="drawer-ava" id="dAva">🏪</div>
+    <div>
+      <div class="drawer-name" id="dName">—</div>
+      <div class="drawer-sub" id="dSub">—</div>
+    </div>
+    <button class="drawer-close" id="drawerClose">✕</button>
+  </div>
+  <div class="drawer-acts" id="dActs"></div>
+  <div class="dtabs">
+    <div class="dtab active" data-tab="info">📋 Info</div>
+    <div class="dtab" data-tab="website">🌐 Website</div>
+    <div class="dtab" data-tab="email">✉️ Email</div>
+  </div>
+  <div class="drawer-body">
+    <div class="dpane active" id="pane-info"></div>
+    <div class="dpane" id="pane-website"></div>
+    <div class="dpane" id="pane-email"></div>
+  </div>
+</div>
+
+<!-- ADD COUNTRY MODAL -->
+<div class="modal-bg" id="addModal">
+  <div class="modal">
+    <h2>Add Country</h2>
+    <p>Choose a market to research social-media-only SMEs in</p>
+    <div class="fg"><label>Country Name</label><input id="mName" placeholder="e.g. Georgia"/></div>
+    <div class="fg"><label>ISO Code</label><input id="mCode" placeholder="e.g. GE" maxlength="2"/></div>
+    <div class="fg"><label>Flag Emoji</label><input id="mFlag" placeholder="e.g. 🇬🇪"/></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="cancelModal">Cancel</button>
+      <button class="btn btn-primary" id="confirmModal">Add Country</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOASTS -->
+<div class="toasts" id="toasts"></div>
+
+<script>
+// ── API base — works on any host ───────────────────────────────────────────────
+const API = window.location.origin + '/api';
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const S = {
+  countries: [],
+  smes: {},      // countryId → []
+  sites: {},     // smeId → {deployedUrl,slug,builtAt}
+  emails: {},    // smeId → {subject,body}
+  country: null, // active country
+  sme: null,     // active SME
+};
+
+// ── Emoji map ─────────────────────────────────────────────────────────────────
+const IND_EMO = {
+  food:'🍽️','food & beverage':'🍽️',beverage:'☕',fashion:'👗',clothing:'👗',
+  beauty:'💄',crafts:'🎨',handmade:'🧶',jewelry:'💍',education:'📚',
+  tutoring:'✏️',home:'🏠','home goods':'🏠',agriculture:'🌱',farm:'🌾',
+  technology:'💻',tech:'💻',services:'🛎️',
+};
+function emo(ind=''){
+  const k=ind.toLowerCase();
+  for(const[p,v] of Object.entries(IND_EMO)) if(k.includes(p)) return v;
+  return '🏪';
+}
+function fnum(n){return n>=1000?(n/1000).toFixed(1)+'k':n||0}
+function slug(s){return s.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')}
+function statusClass(st){
+  return{discovered:'st-disc',website_built:'st-web',deployed:'st-dep',email_ready:'st-eml'}[st]||'st-disc';
+}
+function statusLabel(st){return(st||'discovered').replace('_',' ')}
+
+// ── HTTP ─────────────────────────────────────────────────────────────────────
+async function http(method, path, body){
+  const r = await fetch(API + path, {
+    method,
+    headers:{'Content-Type':'application/json'},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json().catch(()=>({error:'Invalid JSON from server'}));
+  if(!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, type='info'){
+  const icons={ok:'✓',err:'✕',info:'⚡'};
+  const cls={ok:'t-ok',err:'t-err',info:'t-info'};
+  const el=document.createElement('div');
+  el.className=`toast ${cls[type]}`;
+  el.innerHTML=`<span>${icons[type]}</span>${msg}`;
+  document.getElementById('toasts').append(el);
+  setTimeout(()=>el.remove(),4500);
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+function openModal(){document.getElementById('addModal').classList.add('open')}
+function closeModal(){
+  document.getElementById('addModal').classList.remove('open');
+  ['mName','mCode','mFlag'].forEach(id=>document.getElementById(id).value='');
+}
+
+// ── View ─────────────────────────────────────────────────────────────────────
+function showView(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+name).classList.add('active');
+  if(name==='pipeline') renderPipeline();
+}
+function setNavActive(key){
+  document.querySelectorAll('.nav-item[data-view]').forEach(el=>{
+    el.classList.toggle('active', el.dataset.view===key);
+  });
+  document.querySelectorAll('.c-item').forEach(el=>el.classList.remove('active'));
+}
+
+// ── Country view ──────────────────────────────────────────────────────────────
+function gotoCountry(c){
+  S.country=c;
+  setNavActive(null);
+  document.querySelectorAll('.c-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.id===c.id);
+  });
+  document.getElementById('tbTitle').textContent=`${c.flag} ${c.name}`;
+  document.getElementById('tbSub').textContent='Social-media-only SME market';
+  document.getElementById('tbActions').innerHTML=`
+    <button class="btn btn-primary" id="searchBtn" onclick="searchSMEs('${c.id}')">
+      🔍 Search SMEs
+    </button>`;
+  showView('country');
+  renderGrid(c.id);
+}
+
+// ── Countries ─────────────────────────────────────────────────────────────────
+function renderSidebar(){
+  const el=document.getElementById('cList');
+  el.innerHTML=S.countries.map(c=>{
+    const n=(S.smes[c.id]||[]).length;
+    return `<div class="c-item" data-id="${c.id}" onclick='gotoCountry(${JSON.stringify(c)})'>
+      <span class="cflag">${c.flag}</span>
+      <span>${c.name}</span>
+      ${n?`<span class="cbadge">${n}</span>`:''}
+    </div>`;
+  }).join('');
+}
+
+async function loadAll(){
+  try{
+    S.countries = await http('GET','/countries');
+    for(const c of S.countries){
+      try{
+        const smes = await http('GET',`/countries/${c.id}/smes`);
+        S.smes[c.id]=smes;
+        for(const sm of smes){
+          if(['website_built','deployed','email_ready'].includes(sm.status)){
+            try{S.sites[sm.id]=await http('GET',`/smes/${sm.id}/website`)}catch{}
+          }
+          if(sm.status==='email_ready'){
+            try{S.emails[sm.id]=await http('GET',`/smes/${sm.id}/email`)}catch{}
+          }
+        }
+      }catch{}
+    }
+    renderSidebar();
+    updateStats();
+  }catch(e){toast('Failed to load data: '+e.message,'err')}
+}
+
+async function addCountry(){
+  const name=document.getElementById('mName').value.trim();
+  const code=document.getElementById('mCode').value.trim().toUpperCase();
+  const flag=document.getElementById('mFlag').value.trim();
+  if(!name) return toast('Country name is required','err');
+  try{
+    const c=await http('POST','/countries',{name,code,flag:flag||'🌍'});
+    S.countries.push(c);
+    S.smes[c.id]=[];
+    renderSidebar();
+    updateStats();
+    closeModal();
+    toast(`${c.flag} ${c.name} added`,'ok');
+    gotoCountry(c);
+  }catch(e){toast(e.message,'err')}
+}
+
+// ── SME Search ────────────────────────────────────────────────────────────────
+async function searchSMEs(countryId){
+  const btn=document.getElementById('searchBtn');
+  btn.disabled=true;
+  btn.innerHTML=`<span class="spin"></span> Searching…`;
+  document.getElementById('agentBar').innerHTML=`
+    <div class="agent-bar">
+      <span class="spin"></span>
+      <span><strong>SME Search Agent</strong> scanning social media in ${S.country?.name}…</span>
+    </div>`;
+  try{
+    const smes=await http('POST',`/countries/${countryId}/search-smes`);
+    S.smes[countryId]=[...(S.smes[countryId]||[]),...smes];
+    document.getElementById('agentBar').innerHTML='';
+    renderGrid(countryId);
+    renderSidebar();
+    updateStats();
+    toast(`Found ${smes.length} SMEs!`,'ok');
+  }catch(e){
+    document.getElementById('agentBar').innerHTML='';
+    toast('Search failed: '+e.message,'err');
+  }finally{
+    btn.disabled=false;
+    btn.innerHTML='🔍 Search SMEs';
+  }
+}
+
+// ── Grid ──────────────────────────────────────────────────────────────────────
+function renderGrid(cid){
+  const grid=document.getElementById('smeGrid');
+  const emp=document.getElementById('smeEmpty');
+  const list=S.smes[cid]||[];
+  if(!list.length){
+    grid.innerHTML='';
+    emp.innerHTML=`<div class="empty"><div class="empty-ico">🔍</div><h3>No SMEs yet</h3><p>Click "Search SMEs" to run the AI agent.</p></div>`;
+    return;
+  }
+  emp.innerHTML='';
+  grid.innerHTML=list.map(s=>`
+    <div class="sme-card" onclick="openDrawer('${s.id}')">
+      <div class="sme-head">
+        <div class="sme-ava">${emo(s.industry)}</div>
+        <div>
+          <div class="sme-nm">${s.name}</div>
+          <div class="sme-pt">${s.productType}</div>
+        </div>
+        <span class="sme-badge ${statusClass(s.status)}">${statusLabel(s.status)}</span>
+      </div>
+      <div class="sme-tags">
+        ${(s.tags||[]).slice(0,3).map(t=>`<span class="tag">${t}</span>`).join('')}
+        <span class="tag">📍 ${(s.location||'').split(',')[0]}</span>
+      </div>
+      <div class="sme-metrics">
+        <span>👥 ${fnum(s.followers?.facebook)} FB</span>
+        <span>📸 ${fnum(s.followers?.instagram)} IG</span>
+        <span>💰 ${s.priceRange}</span>
+      </div>
+      <div class="opp-bar">
+        <div class="opp-lbl"><span>Opportunity Score</span><span>${s.opportunityScore||75}%</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${s.opportunityScore||75}%"></div></div>
+      </div>
+      <div class="sme-social">
+        ${s.socialMedia?.facebook?'<span class="spill">📘 Facebook</span>':''}
+        ${s.socialMedia?.instagram?'<span class="spill">📸 Instagram</span>':''}
+        ${s.socialMedia?.whatsapp?'<span class="spill">💬 WhatsApp</span>':''}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Drawer ────────────────────────────────────────────────────────────────────
+function findSME(id){
+  for(const list of Object.values(S.smes)){
+    const s=list.find(x=>x.id===id);
+    if(s) return s;
+  }
+  return null;
+}
+
+function openDrawer(id){
+  const s=findSME(id);
+  if(!s) return;
+  S.sme=s;
+  document.getElementById('dAva').textContent=emo(s.industry);
+  document.getElementById('dName').textContent=s.name;
+  document.getElementById('dSub').textContent=`${s.productType} · ${s.location}`;
+  renderDActions(s);
+  renderPaneInfo(s);
+  renderPaneSite(s);
+  renderPaneEmail(s);
+  // reset to info tab
+  document.querySelectorAll('.dtab').forEach((t,i)=>t.classList.toggle('active',i===0));
+  document.querySelectorAll('.dpane').forEach((p,i)=>p.classList.toggle('active',i===0));
+  document.getElementById('overlay').classList.add('open');
+  document.getElementById('drawer').classList.add('open');
+}
+
+function closeDrawer(){
+  document.getElementById('overlay').classList.remove('open');
+  document.getElementById('drawer').classList.remove('open');
+}
+
+function renderDActions(s){
+  const hasSite=!!S.sites[s.id];
+  const hasEmail=!!S.emails[s.id];
+  const dep=S.sites[s.id]?.deployedUrl;
+  document.getElementById('dActs').innerHTML=`
+    <button class="btn btn-ghost btn-sm" id="btnBuild" onclick="doBuild('${s.id}')">
+      ${hasSite?'🔄 Rebuild':'🔨 Build Website'}
+    </button>
+    ${hasSite?`
+      <button class="btn btn-ghost btn-sm" id="btnDeploy" onclick="doDeploy('${s.id}')">
+        ${dep?'✅ Deployed':'🚀 Deploy'}
+      </button>
+      <button class="btn btn-ghost btn-sm" id="btnEmail" onclick="doEmail('${s.id}')">
+        ${hasEmail?'🔄 Regen Email':'✉️ Generate Email'}
+      </button>
+    `:''}
+  `;
+}
+
+function switchTab(tab){
+  document.querySelectorAll('.dtab').forEach(t=>t.classList.toggle('active',t.dataset.tab===tab));
+  document.querySelectorAll('.dpane').forEach(p=>p.classList.toggle('active',p.id===`pane-${tab}`));
+}
+
+function renderPaneInfo(s){
+  document.getElementById('pane-info').innerHTML=`
+    <div class="info-grid">
+      <div class="info-cell"><div class="info-lbl">Industry</div><div class="info-val">${s.industry}</div></div>
+      <div class="info-cell"><div class="info-lbl">Location</div><div class="info-val">${s.location}</div></div>
+      <div class="info-cell"><div class="info-lbl">Owner</div><div class="info-val">${s.ownerName}</div></div>
+      <div class="info-cell"><div class="info-lbl">Founded</div><div class="info-val">${s.foundedYear||'—'}</div></div>
+      <div class="info-cell"><div class="info-lbl">Employees</div><div class="info-val">${s.employeeCount}</div></div>
+      <div class="info-cell"><div class="info-lbl">Revenue/mo</div><div class="info-val">${s.monthlyRevenue}</div></div>
+      <div class="info-cell"><div class="info-lbl">Price Range</div><div class="info-val">${s.priceRange}</div></div>
+      <div class="info-cell"><div class="info-lbl">Contact</div><div class="info-val">${s.contactEmail}</div></div>
+    </div>
+    <p style="font-size:13.5px;line-height:1.7;margin-bottom:16px">${s.description}</p>
+    <hr class="div"/>
+    <div style="margin-bottom:16px">
+      <div class="info-lbl" style="margin-bottom:8px">Products / Services</div>
+      <div class="chip-list">${(s.products||[]).map(p=>`<span class="chip">${p}</span>`).join('')}</div>
+    </div>
+    <hr class="div"/>
+    <div style="margin-bottom:16px">
+      <div class="info-lbl" style="margin-bottom:8px">Social Media</div>
+      ${s.socialMedia?.facebook?`<div style="font-size:13px;margin-bottom:5px">📘 <a href="${s.socialMedia.facebook}" target="_blank">${s.socialMedia.facebook}</a></div>`:''}
+      ${s.socialMedia?.instagram?`<div style="font-size:13px;margin-bottom:5px">📸 <a href="${s.socialMedia.instagram}" target="_blank">${s.socialMedia.instagram}</a></div>`:''}
+      ${s.socialMedia?.whatsapp?`<div style="font-size:13px">💬 ${s.socialMedia.whatsapp}</div>`:''}
+    </div>
+    <hr class="div"/>
+    <div class="info-lbl" style="margin-bottom:6px">Why No Website</div>
+    <p style="font-size:13px;color:var(--muted2);font-style:italic">"${s.noWebsiteReason}"</p>
+  `;
+}
+
+function renderPaneSite(s){
+  const site=S.sites[s.id];
+  const el=document.getElementById('pane-website');
+  if(!site){
+    el.innerHTML=`<div class="empty"><div class="empty-ico">🔨</div><h3>No website yet</h3><p>Click "Build Website" to generate a tailored site for this business.</p><button class="btn btn-primary" onclick="doBuild('${s.id}')">🔨 Build Website</button></div>`;
+    return;
+  }
+  const dep=site.deployedUrl;
+  const previewUrl=`${API}/smes/${s.id}/website/preview`;
+  const dlUrl=`${API}/smes/${s.id}/website/download`;
+  el.innerHTML=`
+    ${dep?`<div class="dep-banner">✅ <strong>Live:</strong> <a href="${dep}" target="_blank">${dep}</a><button class="copy-btn" onclick="copyText('${dep}')">Copy</button></div>`:''}
+    <div class="browser">
+      <div class="browser-bar">
+        <div class="bdots"><div class="bdot bd-r"></div><div class="bdot bd-y"></div><div class="bdot bd-g"></div></div>
+        <div class="burl">${dep||previewUrl}</div>
+      </div>
+      <iframe class="website-iframe" src="${previewUrl}?t=${Date.now()}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading="lazy"></iframe>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+      <a class="btn btn-ghost btn-sm" href="${dlUrl}" target="_blank">⬇️ Download HTML</a>
+      <a class="btn btn-ghost btn-sm" href="${previewUrl}" target="_blank">↗️ Open Preview</a>
+      <button class="btn btn-ghost btn-sm" onclick="doBuild('${s.id}')">🔄 Rebuild</button>
+      ${!dep?`<button class="btn btn-success btn-sm" onclick="doDeploy('${s.id}')">🚀 Deploy</button>`:''}
+    </div>
+  `;
+}
+
+function renderPaneEmail(s){
+  const em=S.emails[s.id];
+  const el=document.getElementById('pane-email');
+  if(!em){
+    el.innerHTML=`<div class="empty"><div class="empty-ico">✉️</div><h3>No email yet</h3><p>${S.sites[s.id]?'Click "Generate Email" to write a personalised outreach.':'Build the website first, then generate the email.'}</p>${S.sites[s.id]?`<button class="btn btn-primary" onclick="doEmail('${s.id}')">✉️ Generate Email</button>`:''}</div>`;
+    return;
+  }
+  el.innerHTML=`
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">
+      <button class="copy-btn" onclick="copyText(document.getElementById('eBody').textContent)">Copy</button>
+      <button class="btn btn-ghost btn-sm" onclick="doEmail('${s.id}')">🔄 Regen</button>
+    </div>
+    <div class="email-wrap">
+      <div class="email-hdr">
+        <div class="email-row"><span class="email-lbl">To:</span><span>${s.contactEmail}</span></div>
+        <div class="email-row"><span class="email-lbl">Subject:</span><strong>${em.subject}</strong></div>
+      </div>
+      <div class="email-body-txt" id="eBody">${em.body}</div>
+    </div>
+  `;
+}
+
+// ── Agents ────────────────────────────────────────────────────────────────────
+async function doBuild(id){
+  const btn=document.getElementById('btnBuild');
+  if(btn){btn.disabled=true;btn.innerHTML=`<span class="spin"></span> Building…`}
+  toast('Website Builder Agent running…','info');
+  try{
+    await http('POST',`/smes/${id}/build-website`);
+    S.sites[id]=await http('GET',`/smes/${id}/website`);
+    updateSMEStatus(id,'website_built');
+    toast('✨ Website built!','ok');
+    if(S.sme?.id===id){renderDActions(S.sme);renderPaneSite(S.sme)}
+    if(S.country) renderGrid(S.country.id);
+    updateStats();
+  }catch(e){toast('Build failed: '+e.message,'err')}
+  finally{if(btn){btn.disabled=false;btn.innerHTML='🔄 Rebuild'}}
+}
+
+async function doDeploy(id){
+  const btn=document.getElementById('btnDeploy');
+  if(btn){btn.disabled=true;btn.innerHTML=`<span class="spin"></span> Deploying…`}
+  toast('Deploying…','info');
+  try{
+    const r=await http('POST',`/smes/${id}/deploy`);
+    if(S.sites[id]) S.sites[id].deployedUrl=r.url;
+    updateSMEStatus(id,'deployed');
+    toast(`🚀 Deployed: ${r.url}`,'ok');
+    if(S.sme?.id===id){renderDActions(S.sme);renderPaneSite(S.sme)}
+    if(S.country) renderGrid(S.country.id);
+  }catch(e){toast('Deploy failed: '+e.message,'err')}
+  finally{if(btn){btn.disabled=false;btn.innerHTML='✅ Deployed'}}
+}
+
+async function doEmail(id){
+  const btn=document.getElementById('btnEmail');
+  if(btn){btn.disabled=true;btn.innerHTML=`<span class="spin"></span> Writing…`}
+  toast('Marketing Agent composing email…','info');
+  try{
+    const em=await http('POST',`/smes/${id}/generate-email`);
+    S.emails[id]=em;
+    updateSMEStatus(id,'email_ready');
+    toast('✉️ Email ready!','ok');
+    if(S.sme?.id===id){
+      renderDActions(S.sme);renderPaneEmail(S.sme);
+      switchTab('email');
+    }
+    if(S.country) renderGrid(S.country.id);
+    updateStats();
+  }catch(e){toast('Email failed: '+e.message,'err')}
+  finally{if(btn){btn.disabled=false;btn.innerHTML='🔄 Regen Email'}}
+}
+
+function updateSMEStatus(id,status){
+  for(const list of Object.values(S.smes)){
+    const s=list.find(x=>x.id===id);
+    if(s){s.status=status;break}
+  }
+}
+
+// ── Pipeline ──────────────────────────────────────────────────────────────────
+function renderPipeline(){
+  const all=Object.values(S.smes).flat();
+  const cols=[
+    {key:'discovered',label:'Discovered',color:'#616488'},
+    {key:'website_built',label:'Website Built',color:'var(--a)'},
+    {key:'deployed',label:'Deployed',color:'var(--a3)'},
+    {key:'email_ready',label:'Email Ready',color:'var(--warn)'},
+  ];
+  document.getElementById('pipeBoard').innerHTML=cols.map(col=>{
+    const items=all.filter(s=>s.status===col.key);
+    return `<div class="pip-col">
+      <div class="pip-hdr"><div class="pip-dot" style="background:${col.color}"></div>${col.label}<span class="pip-cnt">${items.length}</span></div>
+      <div class="pip-items">
+        ${items.map(s=>`<div class="pip-card" onclick="openDrawer('${s.id}')">
+          <div class="pip-card-nm">${emo(s.industry)} ${s.name}</div>
+          <div class="pip-card-meta">${s.productType}</div>
+        </div>`).join('')||`<div class="pip-empty">Empty</div>`}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function updateStats(){
+  const all=Object.values(S.smes).flat();
+  document.getElementById('s-countries').textContent=S.countries.length;
+  document.getElementById('s-smes').textContent=all.length;
+  document.getElementById('s-sites').textContent=Object.keys(S.sites).length;
+  document.getElementById('s-emails').textContent=Object.keys(S.emails).length;
+}
+
+function copyText(txt){
+  navigator.clipboard.writeText(txt).then(()=>toast('Copied!','ok'));
+}
+
+// ── Wire events ───────────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-item[data-view]').forEach(el=>{
+  el.addEventListener('click',()=>{
+    setNavActive(el.dataset.view);
+    document.getElementById('tbTitle').textContent=el.dataset.view==='dashboard'?'Dashboard':'Pipeline';
+    document.getElementById('tbSub').textContent=el.dataset.view==='dashboard'?'Overview of your SME pipeline':'SME status across all markets';
+    document.getElementById('tbActions').innerHTML=`<button class="btn btn-primary" onclick="openModal()">＋ Add Country</button>`;
+    showView(el.dataset.view);
+  });
+});
+
+document.querySelectorAll('.dtab').forEach(t=>{
+  t.addEventListener('click',()=>switchTab(t.dataset.tab));
+});
+
+['openAddCountry','openAddCountry2','openAddCountry3'].forEach(id=>{
+  document.getElementById(id)?.addEventListener('click',openModal);
+});
+document.getElementById('cancelModal').addEventListener('click',closeModal);
+document.getElementById('confirmModal').addEventListener('click',addCountry);
+document.getElementById('drawerClose').addEventListener('click',closeDrawer);
+document.getElementById('overlay').addEventListener('click',closeDrawer);
+
+document.getElementById('mName').addEventListener('keydown',e=>{if(e.key==='Enter') addCountry()});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+loadAll();
+</script>
+</body>
+</html>
