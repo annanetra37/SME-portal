@@ -33,6 +33,208 @@
       overflow: hidden;
     }
 
+
+
+    .agent-terminal {
+      background: #09090f; 
+      border: 1px solid #1e1e35; 
+      border-radius: 14px;
+      overflow: hidden; 
+      margin-bottom: 20px; 
+      box-shadow: 0 8px 32px #00000080;
+      transition: max-height 0.5s ease;
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 7px;
+      padding: 11px 14px; background: #111118; border-bottom: 1px solid #1e1e35;
+    }
+    .tdot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .tdot.r{background:#ff5f57} .tdot.y{background:#febc2e} .tdot.g{background:#28c840}
+    .terminal-label { font-family: monospace; font-size: 11.5px; color: #555; margin-left: 6px; flex: 1; }
+    .terminal-status { font-size: 11px; font-family: monospace; }
+    .terminal-status.running { color: #c0a0ff; } .terminal-status.done { color: #43e97b; }
+    .terminal-body {
+      padding: 12px 16px; font-family: monospace; font-size: 11.5px;
+      line-height: 1.75; max-height: 300px; overflow-y: auto;
+    }
+    .terminal-body::-webkit-scrollbar{width:3px}
+    .terminal-body::-webkit-scrollbar-thumb{background:#2a2a45;border-radius:3px}
+    .tline{display:flex;gap:10px}
+    .ttime{color:#333;flex-shrink:0;min-width:38px}
+    .tmsg{color:#8080a0;word-break:break-word;flex:1}
+    .tline.phase .tmsg{color:#b090ff;font-weight:700;padding-top:4px}
+    .tline.ok    .tmsg{color:#43e97b}
+    .tline.skip  .tmsg{color:#ff6b6b}
+    .tline.warn  .tmsg{color:#ffd166}
+    .tline.sme   .tmsg{color:#00d4ff;font-weight:600}
+    .tcursor{display:inline-block;width:7px;height:13px;background:#b090ff;vertical-align:middle;margin-left:3px;animation:tblink 1s step-end infinite}
+    @keyframes tblink{0%,100%{opacity:1}50%{opacity:0}}
+    .terminal-footer{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-top:1px solid #1e1e35;font-family:monospace;font-size:11px;color:#444}
+    .tstats{display:flex;gap:14px}
+    .tstat{display:flex;align-items:center;gap:4px}
+    .tstat.blue{color:#00d4ff}.tstat.green{color:#43e97b}.tstat.red{color:#ff6b6b}
+    .live-header{font-size:12.5px;color:var(--muted);padding:0 2px 14px;display:flex;align-items:center;gap:8px}
+    .badge-v{font-size:9px;padding:2px 7px;border-radius:99px;background:#43e97b18;color:#43e97b;border:1px solid #43e97b30;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+    .badge-i{font-size:9px;padding:2px 7px;border-radius:99px;background:#ff9f4318;color:#ff9f43;border:1px solid #ff9f4330;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+    @keyframes cardPop{from{opacity:0;transform:translateY(14px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+    .card-new{animation:cardPop .45s cubic-bezier(0.16,1,0.3,1) forwards}
+
+    .terminal-titlebar {
+      display: flex; align-items: center; gap: 7px;
+      padding: 10px 14px;
+      background: #0f0f1c;
+      border-bottom: 1px solid #1e1e35;
+      cursor: default;
+    }
+    .td { width: 12px; height: 12px; border-radius: 50%; }
+    .td-r { background: #ff5f57; } .td-y { background: #febc2e; } .td-g { background: #28c840; }
+    .terminal-titlebar-label {
+      font-family: 'DM Mono','JetBrains Mono',monospace;
+      font-size: 11px; color: #444; margin-left: 6px; flex: 1;
+    }
+    .terminal-badge {
+      font-size: 10px; padding: 2px 8px; border-radius: 99px;
+      font-weight: 700; letter-spacing: 0.5px;
+    }
+    .terminal-badge.running { background: #6c63ff22; color: #6c63ff; animation: pulse 2s infinite; }
+    .terminal-badge.done    { background: #43e97b22; color: #43e97b; }
+    .terminal-badge.error   { background: #ff4d6d22; color: #ff4d6d; }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+    .terminal-body {
+      padding: 12px 14px;
+      font-family: 'DM Mono','JetBrains Mono','Courier New',monospace;
+      font-size: 11.5px; line-height: 1.8;
+      max-height: 280px; overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+    .terminal-body::-webkit-scrollbar { width: 3px; }
+    .terminal-body::-webkit-scrollbar-thumb { background: #222; border-radius: 3px; }
+
+    .tl { display: flex; gap: 10px; }
+    .tl-t { color: #2a2a45; flex-shrink: 0; font-size: 10px; padding-top: 1px; }
+    .tl-m { word-break: break-word; }
+
+    .tl.info  .tl-m { color: #6060a0; }
+    .tl.phase .tl-m { color: #a080ff; font-weight: 700; }
+    .tl.ok    .tl-m { color: #43e97b; }
+    .tl.skip  .tl-m { color: #ff6b6b; }
+    .tl.warn  .tl-m { color: #ffd166; }
+    .tl.sme   .tl-m { color: #00d4ff; font-weight: 600; }
+
+    .terminal-cursor {
+      display: inline-block; width: 7px; height: 13px;
+      background: #a080ff; vertical-align: middle;
+      animation: blink 1s step-end infinite; margin-left: 3px;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    .terminal-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 8px 14px; border-top: 1px solid #1e1e35;
+      font-family: 'DM Mono',monospace; font-size: 10px; color: #333;
+    }
+    .t-stats { display: flex; gap: 14px; }
+    .t-stat { display: flex; align-items: center; gap: 4px; }
+    .t-stat.blue  { color: #00d4ff; }
+    .t-stat.green { color: #43e97b; }
+    .t-stat.red   { color: #ff6b6b; }
+
+    .live-header {
+      display: none; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--muted);
+      padding: 0 2px 14px;
+    }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #43e97b;
+      animation: pulse 1.5s infinite;
+    }
+
+    .badge-verified {
+      font-size: 9px; padding: 2px 6px; border-radius: 99px;
+      background: #43e97b18; color: #43e97b;
+      border: 1px solid #43e97b30; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .badge-illustrative {
+      font-size: 9px; padding: 2px 6px; border-radius: 99px;
+      background: #ff9f4318; color: #ff9f43;
+      border: 1px solid #ff9f4330; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+
+    @keyframes cardPop {
+      from { opacity: 0; transform: translateY(20px) scale(0.96); }
+      to   { opacity: 1; transform: translateY(0)   scale(1); }
+    }
+    .sme-card-new { animation: cardPop 0.45s cubic-bezier(0.16,1,0.3,1) forwards; }
+
+
+    .agent-log {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .agent-log-header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 12px;
+      font-size: 14px; font-weight: 700;
+    }
+    .log-line {
+      padding: 3px 0;
+      color: var(--muted);
+      display: flex; gap: 8px;
+    }
+    .log-line.phase  { color: var(--text); font-weight: 600; margin-top: 6px; }
+    .log-line.ok     { color: var(--success); }
+    .log-line.skip   { color: #ff6b6b; }
+    .log-line.warn   { color: var(--warning); }
+
+    .badge-illustrative {
+      font-size: 9px;
+      padding: 2px 7px;
+      border-radius: 99px;
+      background: #ff9f4320;
+      color: #ff9f43;
+      border: 1px solid #ff9f4340;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .verified-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px;
+      color: var(--success);
+      font-weight: 600;
+    }
+    .verified-badge::before {
+      content: '✓';
+      font-size: 11px;
+    }
+
+    .social-link-verified {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; padding: 6px 0;
+    }
+    .social-link-verified a {
+      color: var(--accent);
+      text-decoration: none;
+      word-break: break-all;
+    }
+    .social-link-verified a:hover { text-decoration: underline; }
+    .social-unverified {
+      color: var(--muted);
+      font-size: 12px;
+      font-style: italic;
+    }
     /* ─── Sidebar ─────────────────────────────────────── */
     .sidebar {
       width: 260px;
@@ -881,7 +1083,8 @@ function showView(name, navEl) {
   if (name === 'pipeline') renderPipeline();
 }
 
-function showCountryView(country) {
+
+async function showCountryView(country) {
   state.currentCountry = country;
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.querySelectorAll('.country-item').forEach(c => {
@@ -892,7 +1095,6 @@ function showCountryView(country) {
     <div>${country.flag} ${country.name}</div>
     <div class="sub">SME Market Research — Social Media Only Businesses</div>
   `;
-
   document.getElementById('topbarActions').innerHTML = `
     <button class="btn btn-primary" onclick="searchSMEs('${country.id}')" id="searchBtn">
       🔍 Search SMEs
@@ -900,17 +1102,50 @@ function showCountryView(country) {
   `;
 
   showView('country');
+
+  // Always reload from DB when switching to a country view
+  try {
+    const smes = await api('GET', `/countries/${country.id}/smes`);
+    state.smes[country.id] = smes;
+    renderCountryList();
+    updateStats();
+  } catch {}
+
   renderSMEGrid(country.id);
 }
 
 // ─── Countries ─────────────────────────────────────────
+
 async function loadCountries() {
   try {
     state.countries = await api('GET', '/countries');
+    // Load SMEs for every country from DB
+    await Promise.all(state.countries.map(async c => {
+      try {
+        const smes = await api('GET', `/countries/${c.id}/smes`);
+        state.smes[c.id] = smes;
+        // Also pre-load websites and emails for already-built ones
+        await Promise.all(smes.filter(s => s.status !== 'discovered').map(async s => {
+          if (['website_built','deployed','email_ready'].includes(s.status)) {
+            try {
+              const site = await api('GET', `/smes/${s.id}/website`);
+              state.websites[s.id] = site;
+            } catch {}
+          }
+          if (s.status === 'email_ready') {
+            try {
+              const email = await api('GET', `/smes/${s.id}/email`);
+              state.emails[s.id] = email;
+            } catch {}
+          }
+        }));
+      } catch {}
+    }));
     renderCountryList();
     updateStats();
   } catch {}
 }
+
 
 async function addCountry() {
   const name = document.getElementById('countryName').value.trim();
@@ -950,87 +1185,191 @@ async function searchSMEs(countryId) {
   btn.disabled = true;
   btn.innerHTML = `<div class="spinner"></div> Agent Running...`;
 
-  const statusEl = document.getElementById('agentStatus');
+  const countryName = state.currentCountry?.name || '';
+  const statusEl    = document.getElementById('agentStatus');
+  const grid        = document.getElementById('smeGrid');
+  const empty       = document.getElementById('smeEmpty');
+
+  let cntAdded = 0, cntVerified = 0, cntSkipped = 0;
+  const startMs = Date.now();
+
   statusEl.innerHTML = `
-    <div class="agent-running pulsing">
-      <div class="spinner"></div>
-      <div>
-        <strong>SME Search Agent</strong> is scanning social media ecosystems in 
-        ${state.currentCountry?.name}...
+    <div class="agent-terminal" id="agentTerminal">
+      <div class="terminal-bar">
+        <span class="tdot r"></span><span class="tdot y"></span><span class="tdot g"></span>
+        <span class="terminal-label">weblaunch-agent — ${countryName} pipeline</span>
+        <span class="terminal-status running" id="tStatus">● running</span>
+      </div>
+      <div class="terminal-body" id="tBody">
+        <div class="tline phase">
+          <span class="ttime">00:00</span>
+          <span class="tmsg">🚀 Launching SME discovery for ${countryName}...<span class="tcursor"></span></span>
+        </div>
+      </div>
+      <div class="terminal-footer">
+        <span>WebLaunch Agent v2.3</span>
+        <div class="tstats">
+          <span class="tstat blue"  id="ts-added">🏪 0 added</span>
+          <span class="tstat green" id="ts-ver">✓ 0 verified</span>
+          <span class="tstat red"   id="ts-skip">✗ 0 skipped</span>
+        </div>
       </div>
     </div>
-  `;
+    <div class="live-header" id="liveHdr" style="display:none">
+      <div class="spinner" style="width:13px;height:13px;border-width:2px"></div>
+      <span>Businesses appearing live as they are verified...</span>
+    </div>`;
 
-  try {
-    const smes = await api('POST', `/countries/${countryId}/search-smes`);
-    state.smes[countryId] = [...(state.smes[countryId] || []), ...smes];
-    statusEl.innerHTML = '';
-    renderSMEGrid(countryId);
+  // Don't clear the grid — keep existing SMEs visible, append new ones
+  empty.innerHTML = '';
+
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function appendLog(msg, type) {
+    const body = document.getElementById('tBody');
+    if (!body) return;
+    body.querySelector('.tcursor')?.remove();
+    const sec = Math.floor((Date.now() - startMs) / 1000);
+    const t   = String(Math.floor(sec/60)).padStart(2,'0') + ':' + String(sec%60).padStart(2,'0');
+    const d   = document.createElement('div');
+    d.className = 'tline ' + (type || '');
+    d.innerHTML = `<span class="ttime">${t}</span><span class="tmsg">${esc(msg)}<span class="tcursor"></span></span>`;
+    body.appendChild(d);
+    body.scrollTop = body.scrollHeight;
+    if (type==='ok')   { cntVerified++; document.getElementById('ts-ver').textContent  = `✓ ${cntVerified} verified`; }
+    if (type==='skip') { cntSkipped++;  document.getElementById('ts-skip').textContent = `✗ ${cntSkipped} skipped`; }
+    if (type==='sme')  { cntAdded++;    document.getElementById('ts-added').textContent= `🏪 ${cntAdded} added`; }
+  }
+
+  // Open SSE BEFORE triggering search
+  const es = new EventSource(`${API}/countries/${countryId}/search-stream`);
+
+  es.addEventListener('log', e => {
+    const { msg, type } = JSON.parse(e.data);
+    appendLog(msg, type);
+  });
+
+  es.addEventListener('sme', e => {
+    const sme = JSON.parse(e.data);
+    if (!state.smes[countryId]) state.smes[countryId] = [];
+    // Guard against SSE duplicates in local state
+    if (!state.smes[countryId].find(s => s.id === sme.id)) {
+      state.smes[countryId].push(sme);
+    }
+    document.getElementById('liveHdr').style.display = 'flex';
+    addSmeCard(sme);
     renderCountryList();
     updateStats();
-    toast(`Found ${smes.length} SMEs!`, 'success');
-  } catch {
-    statusEl.innerHTML = '';
-  } finally {
+  });
+
+  es.addEventListener('done', e => {
+    const { total, verified, illustrative, elapsedSeconds } = JSON.parse(e.data);
+    es.close();
+    document.getElementById('tBody')?.querySelector('.tcursor')?.remove();
+    const tStatus = document.getElementById('tStatus');
+    if (tStatus) { tStatus.className = 'terminal-status done'; tStatus.textContent = `● done in ${elapsedSeconds}s`; }
+    const lh = document.getElementById('liveHdr');
+    if (lh) lh.innerHTML = `
+      <span style="color:var(--success)">✅ Search complete — ${total} SMEs found in ${elapsedSeconds}s</span>
+      ${verified     ? `<span class="badge-v">${verified} verified</span>` : ''}
+      ${illustrative ? `<span class="badge-i">${illustrative} illustrative</span>` : ''}`;
+    btn.disabled = false;
+    btn.innerHTML = `🔍 Search More SMEs`;
+    toast(`Found ${total} new SMEs in ${elapsedSeconds}s!`, 'success');
+    // Auto-collapse terminal after 6s
+    setTimeout(() => {
+      const t = document.getElementById('agentTerminal');
+      if (!t) return;
+      t.style.maxHeight = '44px'; t.style.overflow = 'hidden'; t.style.cursor = 'pointer';
+      t.title = 'Click to expand log';
+      t.onclick = () => { t.style.maxHeight=''; t.style.overflow=''; t.onclick=null; t.style.cursor=''; };
+    }, 6000);
+  });
+
+  es.addEventListener('error', () => {
+    appendLog('Stream connection error', 'warn');
+    es.close();
+    btn.disabled = false;
+    btn.innerHTML = `🔍 Search SMEs`;
+  });
+
+  try {
+    await api('POST', `/countries/${countryId}/search-smes`);
+  } catch (err) {
+    appendLog(`Failed to start: ${err.message}`, 'skip');
+    es.close();
     btn.disabled = false;
     btn.innerHTML = `🔍 Search SMEs`;
   }
 }
 
-function renderSMEGrid(countryId) {
+
+function addSmeCard(s) {
   const grid = document.getElementById('smeGrid');
+  if (!grid) return;
+  // Dedup: skip if card already rendered
+  if (document.querySelector(`[data-sme-id="${s.id}"]`)) return;
+
+  const badge = s.isIllustrative
+    ? `<span class="badge-i" title="Illustrative">illustrative</span>`
+    : `<span class="badge-v" title="Verified real business">verified</span>`;
+  const div = document.createElement('div');
+  div.className = 'sme-card card-new';
+  div.setAttribute('data-sme-id', s.id);
+  div.setAttribute('onclick', `openDetail('${s.id}')`);
+  div.innerHTML = `
+    <div class="sme-card-header">
+      <div class="sme-avatar">${getEmoji(s.industry)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="sme-name">${s.name} ${badge}</div>
+        <div class="sme-type">${s.productType}</div>
+      </div>
+      <span class="sme-status status-${s.status}">${s.status.replace('_',' ')}</span>
+    </div>
+    <div class="sme-tags">
+      ${(s.tags||[]).slice(0,3).map(t=>`<span class="tag">${t}</span>`).join('')}
+      <span class="tag">📍 ${(s.location||'').split(',')[0]}</span>
+    </div>
+    <div class="sme-metrics">
+      <span class="sme-metric">👥 ${formatNum(s.followers?.facebook||0)} FB</span>
+      <span class="sme-metric">📸 ${formatNum(s.followers?.instagram||0)} IG</span>
+      <span class="sme-metric">💰 ${s.priceRange}</span>
+    </div>
+    <div class="opportunity-bar">
+      <div class="opportunity-label"><span>Opportunity Score</span><span>${s.opportunityScore||75}%</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${s.opportunityScore||75}%"></div></div>
+    </div>
+    <div class="sme-social">
+      ${s.socialMedia?.facebook  ? `<span class="social-pill">📘 Facebook</span>`  : ''}
+      ${s.socialMedia?.instagram ? `<span class="social-pill">📸 Instagram</span>` : ''}
+      ${s.socialMedia?.whatsapp  ? `<span class="social-pill">💬 WhatsApp</span>`  : ''}
+      ${!s.socialMedia?.facebook&&!s.socialMedia?.instagram?`<span style="font-size:11px;color:var(--muted)">No verified links</span>`:''}
+    </div>`;
+  grid.appendChild(div);
+}
+
+
+function renderSMEGrid(countryId) {
+  const grid  = document.getElementById('smeGrid');
   const empty = document.getElementById('smeEmpty');
-  const smes = state.smes[countryId] || [];
+  const smes  = state.smes[countryId] || [];
 
   if (!smes.length) {
-    grid.innerHTML = '';
+    grid.innerHTML  = '';
     empty.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">🔍</div>
         <div class="empty-title">No SMEs discovered yet</div>
-        <div class="empty-sub">Click "Search SMEs" to run the AI agent and discover businesses operating only on social media in this country.</div>
-      </div>
-    `;
+        <div class="empty-sub">Click "Search SMEs" — businesses will appear live as they're verified.</div>
+      </div>`;
     return;
   }
-
   empty.innerHTML = '';
-  grid.innerHTML = smes.map(s => `
-    <div class="sme-card" onclick="openDetail('${s.id}')">
-      <div class="sme-card-header">
-        <div class="sme-avatar">${getEmoji(s.industry)}</div>
-        <div>
-          <div class="sme-name">${s.name}</div>
-          <div class="sme-type">${s.productType}</div>
-        </div>
-        <span class="sme-status status-${s.status}">${s.status.replace('_', ' ')}</span>
-      </div>
-      <div class="sme-tags">
-        ${(s.tags || []).slice(0, 4).map(t => `<span class="tag">${t}</span>`).join('')}
-        <span class="tag">📍 ${s.location?.split(',')[0]}</span>
-      </div>
-      <div class="sme-metrics">
-        <span class="sme-metric">👥 ${formatNum(s.followers?.facebook || 0)} FB</span>
-        <span class="sme-metric">📸 ${formatNum(s.followers?.instagram || 0)} IG</span>
-        <span class="sme-metric">💰 ${s.priceRange}</span>
-      </div>
-      <div class="opportunity-bar">
-        <div class="opportunity-label">
-          <span>Opportunity Score</span>
-          <span>${s.opportunityScore || 75}%</span>
-        </div>
-        <div class="bar-track">
-          <div class="bar-fill" style="width: ${s.opportunityScore || 75}%"></div>
-        </div>
-      </div>
-      <div class="sme-social">
-        ${s.socialMedia?.facebook ? '<span class="social-pill">📘 Facebook</span>' : ''}
-        ${s.socialMedia?.instagram ? '<span class="social-pill">📸 Instagram</span>' : ''}
-        ${s.socialMedia?.whatsapp ? '<span class="social-pill">💬 WhatsApp</span>' : ''}
-      </div>
-    </div>
-  `).join('');
+  grid.innerHTML  = '';
+  smes.forEach(s => addSmeCard(s));
 }
+
+
 
 function formatNum(n) {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
@@ -1145,9 +1484,38 @@ function renderInfoTab(sme) {
     <div style="margin-bottom:16px">
       <div class="info-item-label" style="margin-bottom:10px">Social Media</div>
       <div style="display:flex;flex-direction:column;gap:8px">
-        ${sme.socialMedia?.facebook ? `<div style="font-size:13px">📘 <a href="${sme.socialMedia.facebook}" target="_blank" style="color:var(--accent)">${sme.socialMedia.facebook}</a></div>` : ''}
-        ${sme.socialMedia?.instagram ? `<div style="font-size:13px">📸 <a href="${sme.socialMedia.instagram}" target="_blank" style="color:var(--accent)">${sme.socialMedia.instagram}</a></div>` : ''}
-        ${sme.socialMedia?.whatsapp ? `<div style="font-size:13px">💬 ${sme.socialMedia.whatsapp}</div>` : ''}
+        ${sme.socialMedia?.facebook
+          ? `<div class="social-link-verified">
+              <span>📘</span>
+              <a href="${sme.socialMedia.facebook}" target="_blank">${sme.socialMedia.facebook}</a>
+              <span class="verified-badge">verified</span>
+            </div>`
+          : `<div class="social-unverified">📘 Facebook — no verified URL found</div>`
+        }
+        ${sme.socialMedia?.instagram
+          ? `<div class="social-link-verified">
+              <span>📸</span>
+              <a href="${sme.socialMedia.instagram}" target="_blank">${sme.socialMedia.instagram}</a>
+              <span class="verified-badge">verified</span>
+            </div>`
+          : `<div class="social-unverified">📸 Instagram — no verified URL found</div>`
+        }
+        ${sme.socialMedia?.whatsapp
+          ? `<div class="social-link-verified">
+              <span>💬</span>
+              <a href="https://wa.me/${sme.socialMedia.whatsapp.replace(/\D/g,'')}" target="_blank">${sme.socialMedia.whatsapp}</a>
+              <span class="verified-badge">verified</span>
+            </div>`
+          : ''
+        }
+        ${sme.isIllustrative
+          ? `<div style="margin-top:8px;padding:10px 12px;background:#ff9f4310;border-radius:8px;border:1px solid #ff9f4330;font-size:12px;color:#ff9f43">
+              ⚠️ This is an <strong>illustrative profile</strong>. Real social media links could not be verified for this business. Use it as a template for your outreach approach.
+            </div>`
+          : `<div style="margin-top:8px;padding:8px 12px;background:#43e97b10;border-radius:8px;border:1px solid #43e97b30;font-size:12px;color:var(--success)">
+              ✓ Social links above were <strong>verified via web search</strong> — this business has no independent website.
+            </div>`
+        }
       </div>
     </div>
 

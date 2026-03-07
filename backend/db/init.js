@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS smes (
   no_website_reason TEXT,
   opportunity_score INT DEFAULT 75,
   languages         JSONB DEFAULT '[]',
+  is_illustrative   BOOLEAN DEFAULT FALSE,
   status            TEXT DEFAULT 'discovered',
   deployed_url      TEXT,
   created_at        TIMESTAMPTZ DEFAULT NOW()
@@ -64,6 +65,17 @@ CREATE TABLE IF NOT EXISTS emails (
 CREATE INDEX IF NOT EXISTS idx_smes_country ON smes(country_id);
 CREATE INDEX IF NOT EXISTS idx_websites_sme ON websites(sme_id);
 CREATE INDEX IF NOT EXISTS idx_emails_sme   ON emails(sme_id);
+
+-- Migration: add is_illustrative if it doesn't exist (safe to run on existing DBs)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'smes' AND column_name = 'is_illustrative'
+  ) THEN
+    ALTER TABLE smes ADD COLUMN is_illustrative BOOLEAN DEFAULT FALSE;
+  END IF;
+END $$;
 `;
 
 async function init() {
@@ -71,7 +83,7 @@ async function init() {
   const adminClient = new Client({
     host:     process.env.DB_HOST     || 'localhost',
     port:     parseInt(process.env.DB_PORT || '5432'),
-    database: 'postgres',                          // always exists
+    database: 'postgres',
     user:     process.env.DB_USER     || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
   });
