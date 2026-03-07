@@ -493,36 +493,45 @@ Return ONLY this JSON:
   }
 }
 
-// Dedicated image URL scraper — runs targeted photo searches
+// Dedicated image URL scraper — browses actual social media pages for og:image + CDN URLs
 async function scrapeImages(sme) {
-  const searches = [
-    sme.socialMedia?.facebook && webSearch(`"${sme.name}" facebook photos products ${sme.location}`),
-    sme.socialMedia?.instagram && webSearch(`"${sme.name}" instagram photos products ${sme.location}`),
-    webSearch(`"${sme.name}" ${sme.location} ${sme.industry} photos products`),
+  // Browse the actual social media pages directly so Claude can read og:image meta tags
+  const fetches = [
+    sme.socialMedia?.facebook && webSearch(
+      `Visit ${sme.socialMedia.facebook} and extract every image URL from: og:image meta tag, cover photo, profile picture, and any product photos visible on the page. Return only the raw https:// URLs.`
+    ),
+    sme.socialMedia?.facebook && webSearch(
+      `Visit ${sme.socialMedia.facebook}/photos and list all photo image URLs you can see`
+    ),
+    sme.socialMedia?.instagram && webSearch(
+      `Visit ${sme.socialMedia.instagram} and extract the og:image URL, profile picture URL, and any post thumbnail URLs from the page HTML`
+    ),
+    // Broad filetype search — sometimes returns directly accessible image URLs
+    webSearch(`"${sme.name}" ${sme.location} product photo filetype:jpg OR filetype:png`),
   ].filter(Boolean);
 
-  const results = await Promise.allSettled(searches);
+  const results = await Promise.allSettled(fetches);
   const rawText = results
     .map(r => r.status === 'fulfilled' ? r.value : '')
     .join('\n\n')
-    .slice(0, 12000);
+    .slice(0, 16000);
 
   const extracted = await claude(
-    'Extract image URLs. Return ONLY a JSON array of strings, no markdown.',
-    `Find all image URLs in these search results for the business "${sme.name}" in ${sme.location}.
+    'Extract image URLs. Return ONLY a valid JSON array of URL strings, no markdown.',
+    `From this page content about "${sme.name}" in ${sme.location}, extract every image URL you can find.
 
-Look for:
-- Direct URLs ending in .jpg .jpeg .png .webp .gif
-- Facebook CDN URLs (fbcdn.net, fbsbx.com, scontent.)
-- Instagram CDN URLs (cdninstagram.com)
-- Any photo hosting URLs
+Look specifically for:
+- og:image meta tag values
+- Facebook CDN URLs (scontent.fbcdn.net, scontent.*.fna.fbcdn.net, fbsbx.com)
+- Instagram CDN URLs (cdninstagram.com, instagram.*)
+- Any https:// URL ending in .jpg .jpeg .png .webp .gif
 
-SEARCH RESULTS:
+PAGE CONTENT:
 ${rawText}
 
-Return ONLY: ["https://url1", "https://url2", ...] — max 10 URLs, prioritise product and business photos.
-If none found, return [].`,
-    600
+Return ONLY valid JSON: ["https://url1", "https://url2", ...] — up to 12 raw image URLs.
+If zero found, return [].`,
+    800
   );
 
   try {
@@ -540,10 +549,20 @@ async function downloadImages(urls, max = 8) {
     if (images.length >= max) break;
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
+      const timer = setTimeout(() => controller.abort(), 10000);
+      // Use full browser headers — required for Facebook/Instagram CDN access
+      const isFb = url.includes('fbcdn') || url.includes('facebook');
+      const isIg = url.includes('cdninstagram') || url.includes('instagram');
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SMEPortal/1.0; +https://sme-portal.app)' },
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          ...(isFb ? { 'Referer': 'https://www.facebook.com/' } : {}),
+          ...(isIg ? { 'Referer': 'https://www.instagram.com/' } : {}),
+        },
       });
       clearTimeout(timer);
       if (!res.ok) continue;
@@ -555,6 +574,26 @@ async function downloadImages(urls, max = 8) {
     } catch (_) { /* skip failed URLs */ }
   }
   return images;
+}
+
+// Topic-matched stock photos via loremflickr.com (free, no API key)
+// Used as fallback when real social media photos can't be downloaded
+function getStockImageUrls(sme, count = 6) {
+  const industryKw = {
+    'Food & Beverage':    'food,cooking,homemade,delicious',
+    'Fashion & Clothing': 'fashion,clothing,boutique,style',
+    'Beauty & Cosmetics': 'beauty,cosmetics,skincare,makeup',
+    'Crafts & Handmade':  'handmade,artisan,craft,workshop',
+    'Jewelry':            'jewelry,accessories,handcrafted,gems',
+    'Home Goods':         'home,decor,interior,furniture',
+    'Agriculture':        'farm,organic,harvest,agriculture',
+    'Education':          'education,learning,books,school',
+    'Services':           'business,service,professional,office',
+  };
+  const kw = encodeURIComponent(industryKw[sme.industry] || sme.industry.toLowerCase().replace(/\s+/g, ','));
+  return Array.from({ length: count }, (_, i) =>
+    `https://loremflickr.com/800/600/${kw}?lock=${i + 1}`
+  );
 }
 
 async function buildWebsiteHtml(sme, content, images = []) {
@@ -1164,8 +1203,14 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
       ...(content?.realImages || []).filter(u => typeof u === 'string' && u.startsWith('https://')),
       ...await scrapeImages(sme),
     ])];
-    const images = await downloadImages(rawImageUrls);
-    console.log(`  📷 ${images.length}/${rawImageUrls.length} images downloaded for "${sme.name}"`);
+    const realImages = await downloadImages(rawImageUrls);
+    console.log(`  📷 ${realImages.length}/${rawImageUrls.length} real images downloaded for "${sme.name}"`);
+
+    // Step 2b: Supplement with topic-matched stock photos when real images are scarce
+    const needed = Math.max(0, 6 - realImages.length);
+    const stockImages = needed > 0 ? await downloadImages(getStockImageUrls(sme, needed + 2)) : [];
+    const images = [...realImages, ...stockImages].slice(0, 8);
+    console.log(`  🖼️  ${images.length} total images (${realImages.length} real + ${stockImages.length} stock) for "${sme.name}"`);
 
     // Step 3: Build full HTML with scraped content + real images
     const html = await buildWebsiteHtml(sme, content, images);
