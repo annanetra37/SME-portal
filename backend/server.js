@@ -8,6 +8,9 @@ import path from 'path';
 
 dotenv.config();
 
+// ─── DB connection diagnostic ──────────────────────────────────────────────────
+console.log('🔌 DB mode:', process.env.DATABASE_URL ? `Railway (${process.env.DATABASE_URL.split('@')[1]})` : 'Local (localhost)');
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
