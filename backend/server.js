@@ -3,12 +3,21 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import Anthropic from '@anthropic-ai/sdk';
 import pool from './db/pool.js';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '20mb' }));
+
+// ─── Serve frontend static files ──────────────────────────────────────────────
+const frontendPath = path.join(__dirname, '..', 'frontend');
+app.use(express.static(frontendPath));
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -1164,6 +1173,9 @@ app.get('/api/smes/:id/email', async (req, res) => {
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── SPA fallback (must be after all API routes) ──────────────────────────────
+app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
 
 // Boot
 const PORT = process.env.PORT || 3001;
