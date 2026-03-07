@@ -65,6 +65,7 @@ async function ensureSchema() {
   for (const sql of [
     `ALTER TABLE smes ADD COLUMN IF NOT EXISTS is_illustrative BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE websites ADD COLUMN IF NOT EXISTS social_content JSONB DEFAULT '{}'`,
+    `ALTER TABLE smes ALTER COLUMN contact_email DROP NOT NULL`,
   ]) {
     try { await pool.query(sql); } catch (_) {}
   }
