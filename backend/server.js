@@ -454,6 +454,8 @@ ${rawText}
 
 Extract everything you can find. For missing fields, use realistic values based on industry/location context.
 
+CRITICAL: For "realImages" — scan the search results above for any literal image URLs (https://...) ending in .jpg .jpeg .png .webp, or CDN URLs from fbcdn.net, cdninstagram.com, pinimg.com, or any image host. Copy them verbatim (up to 8 URLs).
+
 Return ONLY this JSON:
 {
   "tagline": "catchy 6-10 word tagline for this business",
@@ -479,7 +481,7 @@ Return ONLY this JSON:
   "contactPhone": "phone if found or null",
   "openingHours": "hours if found or typical hours for this type of business",
   "uniqueSellingPoints": ["USP 1", "USP 2", "USP 3"],
-  "realImages": []
+  "realImages": ["https://actual-image-url-copied-verbatim-from-search-results.jpg"]
 }`,
     3000
   );
@@ -491,7 +493,71 @@ Return ONLY this JSON:
   }
 }
 
-async function buildWebsiteHtml(sme, content) {
+// Dedicated image URL scraper — runs targeted photo searches
+async function scrapeImages(sme) {
+  const searches = [
+    sme.socialMedia?.facebook && webSearch(`"${sme.name}" facebook photos products ${sme.location}`),
+    sme.socialMedia?.instagram && webSearch(`"${sme.name}" instagram photos products ${sme.location}`),
+    webSearch(`"${sme.name}" ${sme.location} ${sme.industry} photos products`),
+  ].filter(Boolean);
+
+  const results = await Promise.allSettled(searches);
+  const rawText = results
+    .map(r => r.status === 'fulfilled' ? r.value : '')
+    .join('\n\n')
+    .slice(0, 12000);
+
+  const extracted = await claude(
+    'Extract image URLs. Return ONLY a JSON array of strings, no markdown.',
+    `Find all image URLs in these search results for the business "${sme.name}" in ${sme.location}.
+
+Look for:
+- Direct URLs ending in .jpg .jpeg .png .webp .gif
+- Facebook CDN URLs (fbcdn.net, fbsbx.com, scontent.)
+- Instagram CDN URLs (cdninstagram.com)
+- Any photo hosting URLs
+
+SEARCH RESULTS:
+${rawText}
+
+Return ONLY: ["https://url1", "https://url2", ...] — max 10 URLs, prioritise product and business photos.
+If none found, return [].`,
+    600
+  );
+
+  try {
+    const urls = JSON.parse(extracted.replace(/```json\n?|\n?```/g, '').trim());
+    return Array.isArray(urls)
+      ? urls.filter(u => typeof u === 'string' && u.startsWith('https://'))
+      : [];
+  } catch { return []; }
+}
+
+// Download image URLs and convert to base64 data URIs so they are embedded permanently
+async function downloadImages(urls, max = 8) {
+  const images = [];
+  for (const url of urls.slice(0, max * 3)) {
+    if (images.length >= max) break;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SMEPortal/1.0; +https://sme-portal.app)' },
+      });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const ct = (res.headers.get('content-type') || '').split(';')[0].trim();
+      if (!ct.startsWith('image/')) continue;
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength < 4000 || buf.byteLength > 6_000_000) continue; // skip tiny/huge
+      images.push(`data:${ct};base64,${Buffer.from(buf).toString('base64')}`);
+    } catch (_) { /* skip failed URLs */ }
+  }
+  return images;
+}
+
+async function buildWebsiteHtml(sme, content, images = []) {
   const c = content || {};
   const fbUrl = sme.socialMedia?.facebook || '';
   const igUrl = sme.socialMedia?.instagram || '';
@@ -499,6 +565,9 @@ async function buildWebsiteHtml(sme, content) {
   const primary = c.brandColors?.primary || '#2d6a4f';
   const secondary = c.brandColors?.secondary || '#1b4332';
   const accent = c.brandColors?.accent || '#52b788';
+
+  const heroImg = images[0] || null;
+  const productImages = images.slice(1);
 
   const products = (c.products?.length ? c.products : (sme.products || []).map(p => ({
     name: p, description: `Premium ${p} from ${sme.location}`, price: sme.priceRange, emoji: '✨'
@@ -545,14 +614,18 @@ async function buildWebsiteHtml(sme, content) {
   /* HERO */
   .hero {
     min-height: 100vh;
-    background: linear-gradient(135deg, ${secondary} 0%, ${primary} 50%, ${accent} 100%);
+    background: ${heroImg
+      ? `url('${heroImg}') center/cover no-repeat`
+      : `linear-gradient(135deg, ${secondary} 0%, ${primary} 50%, ${accent} 100%)`};
     display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 100px 40px 60px; position: relative; overflow: hidden;
   }
   .hero::before {
     content: ''; position: absolute; inset: 0;
-    background: radial-gradient(circle at 30% 70%, rgba(255,255,255,0.08) 0%, transparent 60%),
-                radial-gradient(circle at 70% 30%, rgba(255,255,255,0.05) 0%, transparent 60%);
+    background: ${heroImg
+      ? `linear-gradient(135deg, ${secondary}dd 0%, ${primary}bb 60%, ${accent}99 100%)`
+      : `radial-gradient(circle at 30% 70%, rgba(255,255,255,0.08) 0%, transparent 60%),
+                radial-gradient(circle at 70% 30%, rgba(255,255,255,0.05) 0%, transparent 60%)`};
   }
   .hero-content { position: relative; z-index: 1; max-width: 800px; }
   .hero-badge {
@@ -786,10 +859,12 @@ async function buildWebsiteHtml(sme, content) {
 <section id="about">
   <div class="container">
     <div class="about-grid">
-      <div class="about-visual">
-        <span class="about-emoji">${sme.industry?.includes('Food') ? '🍽️' : sme.industry?.includes('Fashion') ? '👗' : sme.industry?.includes('Beauty') ? '💄' : sme.industry?.includes('Craft') ? '🎨' : sme.industry?.includes('Jewelry') ? '💍' : '🏪'}</span>
+      <div class="about-visual" ${heroImg ? 'style="padding:0;background:none;border:none;overflow:hidden"' : ''}>
+        ${heroImg
+          ? `<img src="${heroImg}" alt="${sme.name}" style="width:100%;min-height:320px;object-fit:cover;border-radius:24px;display:block;">`
+          : `<span class="about-emoji">${sme.industry?.includes('Food') ? '🍽️' : sme.industry?.includes('Fashion') ? '👗' : sme.industry?.includes('Beauty') ? '💄' : sme.industry?.includes('Craft') ? '🎨' : sme.industry?.includes('Jewelry') ? '💍' : '🏪'}</span>
         <div class="about-visual-title">${sme.name}</div>
-        <p style="color:#666;margin-top:8px;font-size:14px">${sme.location}</p>
+        <p style="color:#666;margin-top:8px;font-size:14px">${sme.location}</p>`}
       </div>
       <div class="about-text">
         <div class="section-label">Our Story</div>
@@ -819,9 +894,12 @@ async function buildWebsiteHtml(sme, content) {
       <p class="section-sub">Handpicked quality — each item made with care. Order directly via the form below or reach out on social media.</p>
     </div>
     <div class="products-grid">
-      ${products.map(p => `
+      ${products.map((p, i) => `
         <div class="product-card">
-          <div class="product-img">${p.emoji || '✨'}</div>
+          ${productImages[i]
+            ? `<img src="${productImages[i]}" alt="${p.name}" style="width:100%;height:180px;object-fit:cover;">`
+            : `<div class="product-img">${p.emoji || '✨'}</div>`
+          }
           <div class="product-body">
             <div class="product-name">${p.name}</div>
             <div class="product-desc">${p.description}</div>
@@ -861,6 +939,26 @@ ${c.socialPostHighlights?.length ? `
         <div class="highlight-card">
           <div class="highlight-icon">${['⭐', '🌿', '💝'][i] || '✨'}</div>
           <div class="highlight-text">${h}</div>
+        </div>
+      `).join('')}
+    </div>
+  </div>
+</section>
+` : ''}
+
+<!-- PHOTO GALLERY -->
+${images.length >= 2 ? `
+<section style="padding:70px 40px;background:#fff">
+  <div class="container">
+    <div class="section-header center">
+      <div class="section-label">Photo Gallery</div>
+      <h2 class="section-title">Our Products & Story</h2>
+      <div class="divider center"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:12px">
+      ${images.map((img, i) => `
+        <div style="border-radius:16px;overflow:hidden;aspect-ratio:1;box-shadow:0 4px 16px rgba(0,0,0,0.1);background:#f0f0f0">
+          <img src="${img}" alt="${sme.name} photo ${i + 1}" style="width:100%;height:100%;object-fit:cover;" loading="lazy">
         </div>
       `).join('')}
     </div>
@@ -1057,12 +1155,20 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
   try {
     console.log(`🌐 Building website for "${sme.name}" — scraping social content first...`);
 
-    // Step 1: Scrape social media content
+    // Step 1: Scrape social media content + extract image URLs
     const content = await scrapeSocialContent(sme);
     console.log(`  ✅ Social content scraped for "${sme.name}"`);
 
-    // Step 2: Build full HTML with scraped content
-    const html = await buildWebsiteHtml(sme, content);
+    // Step 2: Collect image URLs (from content extraction + dedicated image search) then download
+    const rawImageUrls = [...new Set([
+      ...(content?.realImages || []).filter(u => typeof u === 'string' && u.startsWith('https://')),
+      ...await scrapeImages(sme),
+    ])];
+    const images = await downloadImages(rawImageUrls);
+    console.log(`  📷 ${images.length}/${rawImageUrls.length} images downloaded for "${sme.name}"`);
+
+    // Step 3: Build full HTML with scraped content + real images
+    const html = await buildWebsiteHtml(sme, content, images);
     console.log(`  ✅ HTML built (${Math.round(html.length / 1024)}kb)`);
 
     await pool.query(
