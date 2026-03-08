@@ -62,7 +62,7 @@ async function ensureSchema() {
     );
     CREATE TABLE IF NOT EXISTS sme_images (
       id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-      sme_id TEXT NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
+      sme_id TEXT NOT NULL,
       data TEXT NOT NULL,
       platform TEXT, source_url TEXT, caption TEXT,
       scraped_at TIMESTAMPTZ DEFAULT NOW()
@@ -72,11 +72,13 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_emails_sme    ON emails(sme_id);
     CREATE INDEX IF NOT EXISTS idx_sme_images_sme ON sme_images(sme_id);
   `);
-  // Safe column additions
+  // Safe column additions / constraint drops
   for (const sql of [
     `ALTER TABLE smes ADD COLUMN IF NOT EXISTS is_illustrative BOOLEAN DEFAULT FALSE`,
     `ALTER TABLE websites ADD COLUMN IF NOT EXISTS social_content JSONB DEFAULT '{}'`,
     `ALTER TABLE smes ALTER COLUMN contact_email DROP NOT NULL`,
+    // Drop FK on sme_images.sme_id — UUID vs TEXT mismatch breaks fresh deployments
+    `ALTER TABLE sme_images DROP CONSTRAINT IF EXISTS sme_images_sme_id_fkey`,
   ]) {
     try { await pool.query(sql); } catch (_) {}
   }
@@ -872,7 +874,7 @@ ${designGuide}
 5. Respect the suggested brand colours if provided, otherwise choose perfect industry-appropriate ones
 6. Every product must show its name, description, price, and an "Order" / "Enquire" CTA`;
 
-  let html = await claude(systemPrompt, userPrompt, 8000);
+  let html = await claude(systemPrompt, userPrompt, 16000);
 
   // Strip any accidental markdown fences
   html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -954,7 +956,39 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
     let images = await getStoredImages(sme.id);
     console.log(`  📷 ${images.length} stored images found for "${sme.name}"`);
 
-    // Step 2b: Fall back to stock photos if no real images are stored yet
+    // Step 2b: If <3 stored images, try Python scraper now (the "scrape → save → fetch" flow)
+    if (images.length < 3) {
+      const socialUrls = [sme.socialMedia?.instagram, sme.socialMedia?.facebook].filter(Boolean);
+      if (socialUrls.length) {
+        console.log(`  🕷️  Auto-scraping social media images for "${sme.name}"…`);
+        const scraped = await scrapeAndStoreImages(sme, 10);
+        if (scraped.length > 0) {
+          images = scraped;
+          console.log(`  ✅ ${scraped.length} real images scraped and stored`);
+        }
+      }
+    }
+
+    // Step 2c: If still <3, try real CDN image URLs discovered via web search
+    if (images.length < 3 && content?.realImages?.length) {
+      console.log(`  🌐 Trying ${content.realImages.length} real image URLs from web search…`);
+      const webImages = await downloadImages(content.realImages, 6);
+      if (webImages.length > 0) {
+        // Persist them so future rebuilds are faster
+        for (const dataUri of webImages) {
+          try {
+            await pool.query(
+              `INSERT INTO sme_images (sme_id, data, platform, source_url, caption) VALUES ($1,$2,'web',null,null)`,
+              [sme.id, dataUri]
+            );
+          } catch (_) {}
+        }
+        images = [...images, ...webImages];
+        console.log(`  ✅ ${webImages.length} images downloaded from search results`);
+      }
+    }
+
+    // Step 2d: Fall back to stock photos if still not enough real images
     if (images.length < 3) {
       const needed = 6 - images.length;
       const stockImages = await downloadImages(getStockImageUrls(sme, needed + 2));
@@ -963,8 +997,18 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
     }
 
     // Step 3: Build fully unique, industry-tailored HTML with Claude
-    const html = await buildWebsiteHtml(sme, content, images);
+    let html = await buildWebsiteHtml(sme, content, images);
     console.log(`  ✅ HTML built (${Math.round(html.length / 1024)}kb)`);
+
+    // Validate HTML is not truncated — a cut-off <style> block renders as blank page
+    if (!html || html.length < 500) {
+      throw new Error('Website generation produced empty or too-short HTML');
+    }
+    if (!html.includes('</body>') && !html.includes('</html>')) {
+      console.warn('  ⚠️  HTML appears truncated (no closing tags) — attempting rebuild…');
+      html = await buildWebsiteHtml(sme, content, images);
+      if (!html || html.length < 500) throw new Error('Rebuild also failed to produce valid HTML');
+    }
 
     await pool.query(
       `INSERT INTO websites (sme_id, html, social_content) VALUES ($1,$2,$3)
