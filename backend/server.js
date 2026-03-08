@@ -598,541 +598,182 @@ function getStockImageUrls(sme, count = 6) {
 
 async function buildWebsiteHtml(sme, content, images = []) {
   const c = content || {};
-  const fbUrl = sme.socialMedia?.facebook || '';
-  const igUrl = sme.socialMedia?.instagram || '';
-  const waNum = sme.socialMedia?.whatsapp?.replace(/\D/g, '') || '';
-  const primary = c.brandColors?.primary || '#2d6a4f';
-  const secondary = c.brandColors?.secondary || '#1b4332';
-  const accent = c.brandColors?.accent || '#52b788';
-
-  const heroImg = images[0] || null;
-  const productImages = images.slice(1);
+  const fbUrl  = sme.socialMedia?.facebook || '';
+  const igUrl  = sme.socialMedia?.instagram || '';
+  const waNum  = sme.socialMedia?.whatsapp?.replace(/\D/g, '') || '';
 
   const products = (c.products?.length ? c.products : (sme.products || []).map(p => ({
     name: p, description: `Premium ${p} from ${sme.location}`, price: sme.priceRange, emoji: '✨'
   }))).slice(0, 6);
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${sme.name} — ${c.tagline || sme.productType}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --primary: ${primary};
-    --secondary: ${secondary};
-    --accent: ${accent};
-    --text: #1a1a2e;
-    --light: #f8f9fa;
-    --muted: #6c757d;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body { font-family: 'Inter', sans-serif; color: var(--text); background: #fff; }
+  // ── Industry-specific design directions ────────────────────────────────────
+  const designDirections = {
+    'Food & Beverage': `
+PERSONALITY: Warm, inviting, rustic-artisan. Think beloved neighbourhood kitchen.
+PALETTE: Earthy tones — deep amber, terracotta, warm cream, forest green accents.
+TYPOGRAPHY: Bold display serif for headlines (e.g. Lora, Playfair). Warm readable sans for body.
+LAYOUT IDEAS: Full-bleed appetising hero, floating badge "Made fresh daily", ingredient-spotlight strips,
+  menu-card product grid (not boring e-commerce cards), handwritten-feel testimonials, map/hours block.
+SECTIONS to include: Hero → "Our Kitchen Story" → "What We Make" (menu-style) → "Made With Love" (USPs)
+  → Customer Love (testimonials) → Hours & Contact → Footer.
+VIBE: Feels like the homepage of a Michelin-recommended street food spot.`,
 
-  /* NAV */
-  nav {
-    position: fixed; top: 0; width: 100%; z-index: 100;
-    background: rgba(255,255,255,0.95); backdrop-filter: blur(10px);
-    padding: 16px 40px; display: flex; justify-content: space-between; align-items: center;
-    border-bottom: 1px solid rgba(0,0,0,0.08); box-shadow: 0 2px 20px rgba(0,0,0,0.06);
-  }
-  .nav-brand { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; color: var(--primary); }
-  .nav-links { display: flex; gap: 32px; }
-  .nav-links a { text-decoration: none; color: var(--muted); font-size: 14px; font-weight: 500; transition: color 0.2s; }
-  .nav-links a:hover { color: var(--primary); }
-  .nav-cta {
-    background: var(--primary); color: #fff; padding: 10px 24px; border-radius: 50px;
-    text-decoration: none; font-size: 14px; font-weight: 600; transition: all 0.2s;
-  }
-  .nav-cta:hover { background: var(--secondary); transform: translateY(-1px); }
+    'Fashion & Clothing': `
+PERSONALITY: Editorial, aspirational, independent-boutique cool. Think curated capsule collection.
+PALETTE: Contrast-led — either bone/cream with near-black, OR deep burgundy/navy with champagne.
+TYPOGRAPHY: Ultra-thin elegant serif for hero, clean geometric sans for body. Lots of letter-spacing.
+LAYOUT IDEAS: Cinematic full-screen hero (text barely overlapping image), horizontal scroll hint,
+  lookbook-style product grid (large images, minimal text), "The Edit" or "The Drop" section names,
+  pull-quote testimonial in huge italic type, email signup CTA.
+SECTIONS: Hero → "The Collection" (lookbook grid) → "About the Brand" (brand story) → "Style Notes"
+  (USPs framed as editorial tips) → "What Our Clients Say" → Contact/Order → Footer.
+VIBE: Feels like the site of an independent fashion label featured in Vogue.`,
 
-  /* HERO */
-  .hero {
-    min-height: 100vh;
-    background: ${heroImg
-      ? `url('${heroImg}') center/cover no-repeat`
-      : `linear-gradient(135deg, ${secondary} 0%, ${primary} 50%, ${accent} 100%)`};
-    display: flex; align-items: center; justify-content: center;
-    text-align: center; padding: 100px 40px 60px; position: relative; overflow: hidden;
-  }
-  .hero::before {
-    content: ''; position: absolute; inset: 0;
-    background: ${heroImg
-      ? `linear-gradient(135deg, ${secondary}dd 0%, ${primary}bb 60%, ${accent}99 100%)`
-      : `radial-gradient(circle at 30% 70%, rgba(255,255,255,0.08) 0%, transparent 60%),
-                radial-gradient(circle at 70% 30%, rgba(255,255,255,0.05) 0%, transparent 60%)`};
-  }
-  .hero-content { position: relative; z-index: 1; max-width: 800px; }
-  .hero-badge {
-    display: inline-block; background: rgba(255,255,255,0.2); color: #fff;
-    padding: 6px 18px; border-radius: 50px; font-size: 13px; font-weight: 500;
-    letter-spacing: 1px; text-transform: uppercase; margin-bottom: 24px;
-    border: 1px solid rgba(255,255,255,0.3);
-  }
-  .hero h1 {
-    font-family: 'Playfair Display', serif; font-size: clamp(42px, 7vw, 72px);
-    font-weight: 700; color: #fff; line-height: 1.15; margin-bottom: 20px;
-    text-shadow: 0 2px 20px rgba(0,0,0,0.2);
-  }
-  .hero-sub { font-size: clamp(16px, 2.5vw, 20px); color: rgba(255,255,255,0.85); max-width: 560px; margin: 0 auto 40px; line-height: 1.7; }
-  .hero-ctas { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
-  .btn-hero {
-    padding: 16px 36px; border-radius: 50px; font-size: 16px; font-weight: 600;
-    text-decoration: none; cursor: pointer; border: none; transition: all 0.3s; display: inline-flex; align-items: center; gap: 8px;
-  }
-  .btn-primary-hero { background: #fff; color: var(--primary); }
-  .btn-primary-hero:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.2); }
-  .btn-outline-hero { background: transparent; color: #fff; border: 2px solid rgba(255,255,255,0.6); }
-  .btn-outline-hero:hover { background: rgba(255,255,255,0.15); transform: translateY(-3px); }
-  .hero-scroll { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.6); font-size: 13px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
-  .scroll-dot { width: 6px; height: 6px; background: rgba(255,255,255,0.6); border-radius: 50%; animation: bounce 2s infinite; }
-  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(8px)} }
+    'Beauty & Cosmetics': `
+PERSONALITY: Luxurious, clean, wellness-forward. Think high-end spa meets clean beauty brand.
+PALETTE: Soft feminine — blush rose, champagne gold, warm ivory, dusty mauve. OR clean white + sage.
+TYPOGRAPHY: Elegant script/italic serif for accent text, light-weight sans for body. Generous spacing.
+LAYOUT IDEAS: Soft-gradient hero, floating product "ritual" cards, ingredient close-up strips,
+  "The Science & Soul" section, before/after style testimonials, "Book a Treatment" CTA.
+SECTIONS: Hero → "Our Philosophy" → "Treatments & Products" → "Natural Ingredients" → 
+  "Client Transformations" (testimonials) → Book/Contact → Footer.
+VIBE: Feels like Aesop or a luxury day-spa website.`,
 
-  /* HIGHLIGHTS */
-  .highlights { background: var(--primary); padding: 24px 40px; }
-  .hl-grid { display: flex; justify-content: center; gap: 60px; flex-wrap: wrap; }
-  .hl-item { text-align: center; color: #fff; }
-  .hl-num { font-family: 'Playfair Display', serif; font-size: 32px; font-weight: 700; }
-  .hl-label { font-size: 12px; opacity: 0.8; text-transform: uppercase; letter-spacing: 1px; }
+    'Crafts & Handmade': `
+PERSONALITY: Artisan, soulful, handcrafted warmth. Think top Etsy seller meets local gallery.
+PALETTE: Earthy organic — clay orange, sage green, linen cream, dark charcoal, wood brown.
+TYPOGRAPHY: Slightly textured/handcrafted-feel serif for headlines, warm readable sans for body.
+LAYOUT IDEAS: Hero with "Made by hand. Made for you." energy, "The Making Process" step strip,
+  product cards with material callouts, "Every Piece Is Different" uniqueness section,
+  "Custom Orders Welcome" feature block, maker portrait or story block.
+SECTIONS: Hero → "Meet the Maker" → "The Collection" → "How It's Made" → "Custom Orders"
+  → "What Our Customers Say" → Contact → Footer.
+VIBE: Feels like a beloved independent craft studio with personality.`,
 
-  /* SECTIONS */
-  section { padding: 90px 40px; }
-  .container { max-width: 1100px; margin: 0 auto; }
-  .section-label { font-size: 12px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--primary); margin-bottom: 12px; }
-  .section-title { font-family: 'Playfair Display', serif; font-size: clamp(30px, 4vw, 46px); font-weight: 700; line-height: 1.25; margin-bottom: 20px; }
-  .section-sub { font-size: 17px; color: var(--muted); max-width: 600px; line-height: 1.75; }
-  .section-header { margin-bottom: 56px; }
-  .section-header.center { text-align: center; }
-  .section-header.center .section-sub { margin: 0 auto; }
-  .divider { width: 50px; height: 3px; background: var(--accent); margin: 20px 0; border-radius: 2px; }
-  .divider.center { margin: 20px auto; }
+    'Jewelry': `
+PERSONALITY: Precious, minimal, quietly luxurious. Think independent atelier meets fine jewellery house.
+PALETTE: Either: jet black + gold/champagne. Or: pure white + silver/platinum. Bold contrast, no grey areas.
+TYPOGRAPHY: Ultra-elegant thin serif (Cormorant Garamond style), very generous white space, minimal text.
+LAYOUT IDEAS: Dramatic dark or bright hero with a single product close-up, "Each Piece" collection
+  with zoomed-in detail photography feel, "Materials & Craft" story block, "Custom Commissions" feature,
+  dramatic pull-quote testimonial, minimal contact form.
+SECTIONS: Hero → "The Collection" → "Craftsmanship" (materials story) → "Bespoke Commissions"
+  → "Client Stories" → Contact → Footer.
+VIBE: Feels like Mejuri or a Parisian fine-jewellery maison.`,
 
-  /* ABOUT */
-  .about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 80px; align-items: center; }
-  .about-visual {
-    background: linear-gradient(135deg, ${primary}22, ${accent}33);
-    border-radius: 24px; padding: 60px 40px; text-align: center;
-    border: 1px solid ${primary}22;
-  }
-  .about-emoji { font-size: 80px; display: block; margin-bottom: 20px; }
-  .about-visual-title { font-family: 'Playfair Display', serif; font-size: 22px; color: var(--primary); font-weight: 700; }
-  .about-text p { font-size: 16px; color: #444; line-height: 1.85; margin-bottom: 18px; }
-  .about-usps { display: flex; flex-direction: column; gap: 14px; margin-top: 28px; }
-  .usp-item { display: flex; gap: 12px; align-items: flex-start; }
-  .usp-icon { width: 28px; height: 28px; background: ${primary}18; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; margin-top: 2px; }
-  .usp-text { font-size: 15px; color: #444; line-height: 1.6; }
+    'Home Goods': `
+PERSONALITY: Lifestyle, warm, editorial home-magazine. Think curated interior boutique.
+PALETTE: Warm neutrals — warm white, sand, warm taupe, terracotta pop, deep olive.
+TYPOGRAPHY: Modern editorial serif for headlines, clean sans for body. Relaxed airy feel.
+LAYOUT IDEAS: Lifestyle/room-setting hero (not product-on-white), "For Your Home" product grid
+  with room context descriptions, "Design Philosophy" section, "Room Inspirations" mood board strip,
+  "Thoughtfully Made" USP block.
+SECTIONS: Hero → "Curated for Your Home" (products) → "Our Design Story" → "Room Inspirations"
+  → "Why Our Customers Love Us" → Order/Contact → Footer.
+VIBE: Feels like a Kinfolk editorial meets independent home goods shop.`,
 
-  /* PRODUCTS */
-  .products-bg { background: ${primary}06; }
-  .products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 28px; }
-  .product-card {
-    background: #fff; border-radius: 20px; overflow: hidden;
-    border: 1px solid rgba(0,0,0,0.07); transition: all 0.3s;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
-  }
-  .product-card:hover { transform: translateY(-6px); box-shadow: 0 16px 40px rgba(0,0,0,0.12); }
-  .product-img {
-    height: 180px;
-    background: linear-gradient(135deg, ${primary}30, ${accent}40);
-    display: flex; align-items: center; justify-content: center; font-size: 56px;
-  }
-  .product-body { padding: 24px; }
-  .product-name { font-family: 'Playfair Display', serif; font-size: 19px; font-weight: 600; margin-bottom: 8px; }
-  .product-desc { font-size: 14px; color: var(--muted); line-height: 1.65; margin-bottom: 20px; }
-  .product-footer { display: flex; justify-content: space-between; align-items: center; }
-  .product-price { font-size: 18px; font-weight: 700; color: var(--primary); }
-  .btn-order {
-    background: var(--primary); color: #fff; border: none; padding: 10px 22px;
-    border-radius: 50px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s;
-  }
-  .btn-order:hover { background: var(--secondary); transform: translateY(-1px); }
+    'Agriculture': `
+PERSONALITY: Honest, fresh, farm-to-table. Think modern organic farm brand.
+PALETTE: Deep field greens, warm harvest amber, soil brown, sky blue accent, clean white.
+TYPOGRAPHY: Strong bold sans for impact headlines, trustworthy readable serif for body.
+LAYOUT IDEAS: Field/nature-inspired hero, "From Our Farm" origin story, "This Season" product grid,
+  "Why Buy Local" values section, certification/quality badges strip, simple order/delivery info.
+SECTIONS: Hero → "Our Farm Story" → "Fresh This Season" (products) → "Why Choose Local"
+  → "What Our Community Says" → Order/Delivery → Footer.
+VIBE: Feels like a premium farm-box brand or organic co-op.`,
+  };
 
-  /* TESTIMONIAL */
-  .testimonial-section { background: linear-gradient(135deg, ${secondary}, ${primary}); }
-  .testimonial-card { max-width: 720px; margin: 0 auto; text-align: center; }
-  .quote-icon { font-size: 60px; opacity: 0.3; color: #fff; line-height: 1; margin-bottom: 16px; }
-  .quote-text { font-family: 'Playfair Display', serif; font-size: clamp(20px, 3vw, 28px); color: #fff; line-height: 1.6; font-style: italic; margin-bottom: 28px; }
-  .quote-author { color: rgba(255,255,255,0.75); font-size: 15px; font-weight: 500; }
+  const designGuide = designDirections[sme.industry] ||
+    `PERSONALITY: Professional, warm, community-first. Create a design that authentically reflects
+the ${sme.industry} industry character and the culture/aesthetic of ${sme.location?.split(',').pop()?.trim() || 'the region'}.
+Choose palette, typography and layout that feel genuinely specific to this type of business.`;
 
-  /* SOCIAL HIGHLIGHTS */
-  .highlights-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-  .highlight-card {
-    background: #fff; border-radius: 16px; padding: 28px 24px;
-    border: 1px solid rgba(0,0,0,0.07); box-shadow: 0 2px 8px rgba(0,0,0,0.04);
-    transition: all 0.3s;
-  }
-  .highlight-card:hover { border-color: ${primary}40; box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-  .highlight-icon { font-size: 28px; margin-bottom: 14px; }
-  .highlight-text { font-size: 15px; color: #444; line-height: 1.65; }
+  // Image placeholders — actual base64 data URIs are injected AFTER generation
+  const imgInfo = images.length > 0
+    ? `You have ${images.length} real business photo(s). Use these placeholder tokens exactly as shown:
+  Hero/main image: {{IMG_0}}
+  Product images:  {{IMG_1}}, {{IMG_2}}, ... up to {{IMG_${images.length - 1}}}
+  Use them as: <img src="{{IMG_0}}" ...> or style="background-image:url('{{IMG_0}}')".
+  Distribute them naturally — hero background, product cards, gallery, about section.`
+    : `No real photos available. Use rich CSS gradients, patterns, and tasteful emoji/icons instead of <img> tags.`;
 
-  /* CONTACT */
-  .contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: start; }
-  .contact-info { display: flex; flex-direction: column; gap: 24px; }
-  .contact-item { display: flex; gap: 16px; align-items: flex-start; }
-  .contact-icon { width: 44px; height: 44px; background: ${primary}15; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
-  .contact-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 4px; }
-  .contact-value { font-size: 15px; font-weight: 500; }
-  .contact-value a { color: var(--primary); text-decoration: none; }
-  .social-links { display: flex; gap: 14px; margin-top: 8px; }
-  .social-btn {
-    display: flex; align-items: center; gap: 8px; padding: 12px 20px;
-    border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 600; transition: all 0.2s;
-  }
-  .fb-btn { background: #1877f215; color: #1877f2; border: 1px solid #1877f230; }
-  .fb-btn:hover { background: #1877f2; color: #fff; }
-  .ig-btn { background: #e1306c15; color: #e1306c; border: 1px solid #e1306c30; }
-  .ig-btn:hover { background: #e1306c; color: #fff; }
-  .wa-btn { background: #25d36615; color: #25d366; border: 1px solid #25d36630; }
-  .wa-btn:hover { background: #25d366; color: #fff; }
+  const systemPrompt = `You are a world-class web designer and front-end developer who creates \
+stunning, highly customised websites. Every site you build feels unique and tailor-made — \
+never templated.
 
-  /* ORDER FORM */
-  .order-form { background: var(--light); border-radius: 20px; padding: 36px; }
-  .order-form h3 { font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; margin-bottom: 24px; }
-  .form-group { margin-bottom: 18px; }
-  .form-label { display: block; font-size: 13px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 7px; }
-  .form-input, .form-select, .form-textarea {
-    width: 100%; padding: 12px 16px; border: 1.5px solid #e0e0e0; border-radius: 10px;
-    font-size: 15px; font-family: 'Inter', sans-serif; transition: border-color 0.2s; background: #fff;
-  }
-  .form-input:focus, .form-select:focus, .form-textarea:focus { outline: none; border-color: var(--primary); }
-  .form-textarea { resize: vertical; min-height: 90px; }
-  .btn-submit {
-    width: 100%; background: var(--primary); color: #fff; padding: 15px; border: none;
-    border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all 0.2s;
-    font-family: 'Inter', sans-serif;
-  }
-  .btn-submit:hover { background: var(--secondary); }
-  .success-msg { display: none; text-align: center; padding: 30px; }
-  .success-msg.show { display: block; }
-  .success-icon { font-size: 48px; margin-bottom: 12px; }
-  .success-msg h4 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
-  .success-msg p { color: var(--muted); }
+ABSOLUTE RULES:
+- Output ONLY the complete raw HTML. No markdown fences, no explanation, no comments outside the HTML.
+- Single self-contained file: all CSS and JS must be inline (inside <style> and <script> tags).
+- Fully mobile-responsive (use media queries or CSS grid/flex).
+- No Lorem Ipsum — every word of copy must be real, specific to this business.
+- The visual identity (palette, typography, layout, section names, tone of copy) must be \
+unmistakably industry-specific — not a generic business template with colours swapped.
+- MUST include a working order/contact form that, on submit, opens WhatsApp with pre-filled message \
+(if WhatsApp number provided) or shows a confirmation message.
+- Social media links (Facebook, Instagram) must be included if provided.
+- Include smooth scroll, subtle entrance animations (CSS or Intersection Observer), hover effects.`;
 
-  /* FOOTER */
-  footer { background: ${secondary}; color: rgba(255,255,255,0.8); padding: 48px 40px; text-align: center; }
-  .footer-brand { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: #fff; margin-bottom: 12px; }
-  .footer-sub { font-size: 14px; margin-bottom: 24px; }
-  .footer-links { display: flex; justify-content: center; gap: 24px; margin-bottom: 28px; }
-  .footer-links a { color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px; transition: color 0.2s; }
-  .footer-links a:hover { color: #fff; }
-  .footer-copy { font-size: 12px; opacity: 0.5; }
+  const userPrompt = `Build a complete, unique, production-ready website for this business.
 
-  /* WHATSAPP FLOAT */
-  .wa-float {
-    position: fixed; bottom: 28px; right: 28px; z-index: 999;
-    background: #25d366; color: #fff; width: 58px; height: 58px;
-    border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    font-size: 28px; text-decoration: none; box-shadow: 0 4px 20px rgba(37,211,102,0.4);
-    transition: all 0.3s;
-  }
-  .wa-float:hover { transform: scale(1.12); box-shadow: 0 8px 30px rgba(37,211,102,0.5); }
+━━━ BUSINESS DATA ━━━
+Name:         ${sme.name}
+Industry:     ${sme.industry}
+Location:     ${sme.location}
+Description:  ${sme.description || c.aboutText || '(none provided)'}
+Founded:      ${sme.foundedYear || 'unknown'}
+Employees:    ${sme.employeeCount || '1-5'}
+Price range:  ${sme.priceRange || 'varies'}
+Tags:         ${(sme.tags || []).join(', ')}
 
-  /* RESPONSIVE */
-  @media (max-width: 768px) {
-    nav { padding: 14px 20px; }
-    .nav-links { display: none; }
-    section { padding: 60px 20px; }
-    .about-grid, .contact-grid { grid-template-columns: 1fr; gap: 40px; }
-    .highlights-grid { grid-template-columns: 1fr; }
-    .hl-grid { gap: 30px; }
-  }
-</style>
-</head>
-<body>
+━━━ SOCIAL PRESENCE ━━━
+Facebook:     ${fbUrl || 'none'}   (Followers: ${sme.followers?.facebook || 0})
+Instagram:    ${igUrl || 'none'}   (Followers: ${sme.followers?.instagram || 0})
+WhatsApp:     ${waNum ? `+${waNum}` : 'none'}
 
-<!-- NAV -->
-<nav>
-  <div class="nav-brand">${sme.name}</div>
-  <div class="nav-links">
-    <a href="#about">About</a>
-    <a href="#products">Products</a>
-    <a href="#contact">Contact</a>
-  </div>
-  <a href="#contact" class="nav-cta">Order Now</a>
-</nav>
+━━━ CONTENT FROM SOCIAL MEDIA ━━━
+Hero headline:  "${c.heroHeadline || sme.name}"
+Tagline:        "${c.tagline || sme.productType || ''}"
+About text:     ${c.aboutText || sme.description || '(write based on industry/location)'}
+Unique selling points: ${(c.uniqueSellingPoints || []).join(' | ') || '(infer from industry)'}
+Testimonial:    "${c.testimonialQuote || ''}" — ${c.testimonialAuthor || ''}
+Social highlights: ${(c.socialPostHighlights || []).join(' | ')}
+Opening hours:  ${c.openingHours || ''}
+Contact phone:  ${c.contactPhone || ''}
+Suggested brand colours: primary=${c.brandColors?.primary || 'choose'}, \
+secondary=${c.brandColors?.secondary || 'choose'}, accent=${c.brandColors?.accent || 'choose'}
 
-<!-- HERO -->
-<section class="hero">
-  <div class="hero-content">
-    <div class="hero-badge">📍 ${sme.location}</div>
-    <h1>${c.heroHeadline || sme.name}</h1>
-    <p class="hero-sub">${c.tagline || sme.productType}</p>
-    <div class="hero-ctas">
-      <a href="#products" class="btn-hero btn-primary-hero">🛒 Shop Now</a>
-      <a href="#contact" class="btn-hero btn-outline-hero">💬 Get in Touch</a>
-    </div>
-  </div>
-  <div class="hero-scroll">
-    <span>Scroll to explore</span>
-    <div class="scroll-dot"></div>
-  </div>
-</section>
+━━━ PRODUCTS / SERVICES ━━━
+${products.map(p => `• ${p.name} — ${p.description} — ${p.price || sme.priceRange}`).join('\n')}
 
-<!-- HIGHLIGHTS BAR -->
-<div class="highlights">
-  <div class="hl-grid">
-    <div class="hl-item">
-      <div class="hl-num">${sme.followers?.facebook ? Math.round((sme.followers.facebook || 0) / 100) * 100 + '+' : '500+'}</div>
-      <div class="hl-label">Facebook Followers</div>
-    </div>
-    <div class="hl-item">
-      <div class="hl-num">${sme.followers?.instagram ? Math.round((sme.followers.instagram || 0) / 100) * 100 + '+' : '300+'}</div>
-      <div class="hl-label">Instagram Followers</div>
-    </div>
-    <div class="hl-item">
-      <div class="hl-num">${products.length}+</div>
-      <div class="hl-label">Products Available</div>
-    </div>
-    <div class="hl-item">
-      <div class="hl-num">${sme.foundedYear ? new Date().getFullYear() - sme.foundedYear + '+' : '3+'}</div>
-      <div class="hl-label">Years in Business</div>
-    </div>
-  </div>
-</div>
+━━━ IMAGES ━━━
+${imgInfo}
 
-<!-- ABOUT -->
-<section id="about">
-  <div class="container">
-    <div class="about-grid">
-      <div class="about-visual" ${heroImg ? 'style="padding:0;background:none;border:none;overflow:hidden"' : ''}>
-        ${heroImg
-          ? `<img src="${heroImg}" alt="${sme.name}" style="width:100%;min-height:320px;object-fit:cover;border-radius:24px;display:block;">`
-          : `<span class="about-emoji">${sme.industry?.includes('Food') ? '🍽️' : sme.industry?.includes('Fashion') ? '👗' : sme.industry?.includes('Beauty') ? '💄' : sme.industry?.includes('Craft') ? '🎨' : sme.industry?.includes('Jewelry') ? '💍' : '🏪'}</span>
-        <div class="about-visual-title">${sme.name}</div>
-        <p style="color:#666;margin-top:8px;font-size:14px">${sme.location}</p>`}
-      </div>
-      <div class="about-text">
-        <div class="section-label">Our Story</div>
-        <h2 class="section-title">Crafted with Passion,<br>Delivered with Care</h2>
-        <div class="divider"></div>
-        ${(c.aboutText || sme.description || '').split('\n').filter(Boolean).map(p => `<p>${p}</p>`).join('')}
-        <div class="about-usps">
-          ${(c.uniqueSellingPoints || ['Quality you can trust', 'Locally made with love', 'Fast delivery available']).map(usp => `
-            <div class="usp-item">
-              <div class="usp-icon">✓</div>
-              <div class="usp-text">${usp}</div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
+━━━ DESIGN DIRECTION FOR ${sme.industry.toUpperCase()} ━━━
+${designGuide}
 
-<!-- PRODUCTS -->
-<section id="products" class="products-bg">
-  <div class="container">
-    <div class="section-header center">
-      <div class="section-label">Our Collection</div>
-      <h2 class="section-title">Our Products</h2>
-      <div class="divider center"></div>
-      <p class="section-sub">Handpicked quality — each item made with care. Order directly via the form below or reach out on social media.</p>
-    </div>
-    <div class="products-grid">
-      ${products.map((p, i) => `
-        <div class="product-card">
-          ${productImages[i]
-            ? `<img src="${productImages[i]}" alt="${p.name}" style="width:100%;height:180px;object-fit:cover;">`
-            : `<div class="product-img">${p.emoji || '✨'}</div>`
-          }
-          <div class="product-body">
-            <div class="product-name">${p.name}</div>
-            <div class="product-desc">${p.description}</div>
-            <div class="product-footer">
-              <div class="product-price">${p.price || sme.priceRange}</div>
-              <button class="btn-order" onclick="openOrder('${p.name}')">Order</button>
-            </div>
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  </div>
-</section>
+━━━ TECHNICAL REQUIREMENTS ━━━
+1. WhatsApp order button/form: ${waNum
+    ? `On form submit, open https://wa.me/${waNum}?text=... with pre-filled message including customer name, product, quantity`
+    : 'No WhatsApp — show a confirmation message and prompt them to reach via social media'}
+2. Facebook link: ${fbUrl || 'none'}
+3. Instagram link: ${igUrl || 'none'}
+4. Use Google Fonts that match the industry personality (specify in <link> tag)
+5. Respect the suggested brand colours if provided, otherwise choose perfect industry-appropriate ones
+6. Every product must show its name, description, price, and an "Order" / "Enquire" CTA`;
 
-<!-- TESTIMONIAL -->
-<section class="testimonial-section">
-  <div class="container">
-    <div class="testimonial-card">
-      <div class="quote-icon">"</div>
-      <p class="quote-text">${c.testimonialQuote || `The quality is absolutely incredible. I've been ordering from ${sme.name} for years and they never disappoint.`}</p>
-      <p class="quote-author">— ${c.testimonialAuthor || 'Happy Customer'}</p>
-    </div>
-  </div>
-</section>
+  let html = await claude(systemPrompt, userPrompt, 8000);
 
-<!-- HIGHLIGHTS FROM SOCIAL -->
-${c.socialPostHighlights?.length ? `
-<section>
-  <div class="container">
-    <div class="section-header center">
-      <div class="section-label">From Our Community</div>
-      <h2 class="section-title">What We're Known For</h2>
-      <div class="divider center"></div>
-    </div>
-    <div class="highlights-grid">
-      ${c.socialPostHighlights.slice(0, 3).map((h, i) => `
-        <div class="highlight-card">
-          <div class="highlight-icon">${['⭐', '🌿', '💝'][i] || '✨'}</div>
-          <div class="highlight-text">${h}</div>
-        </div>
-      `).join('')}
-    </div>
-  </div>
-</section>
-` : ''}
+  // Strip any accidental markdown fences
+  html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
 
-<!-- PHOTO GALLERY -->
-${images.length >= 2 ? `
-<section style="padding:70px 40px;background:#fff">
-  <div class="container">
-    <div class="section-header center">
-      <div class="section-label">Photo Gallery</div>
-      <h2 class="section-title">Our Products & Story</h2>
-      <div class="divider center"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:12px">
-      ${images.map((img, i) => `
-        <div style="border-radius:16px;overflow:hidden;aspect-ratio:1;box-shadow:0 4px 16px rgba(0,0,0,0.1);background:#f0f0f0">
-          <img src="${img}" alt="${sme.name} photo ${i + 1}" style="width:100%;height:100%;object-fit:cover;" loading="lazy">
-        </div>
-      `).join('')}
-    </div>
-  </div>
-</section>
-` : ''}
-
-<!-- CONTACT + ORDER -->
-<section id="contact" style="background:#f8f9fa">
-  <div class="container">
-    <div class="contact-grid">
-      <div>
-        <div class="section-label">Get In Touch</div>
-        <h2 class="section-title">Place Your Order</h2>
-        <div class="divider"></div>
-        <p style="color:var(--muted);font-size:16px;line-height:1.75;margin-bottom:32px">
-          Ready to order? Fill out the form or reach us directly on social media. We respond within 24 hours.
-        </p>
-        <div class="contact-info">
-          ${sme.location ? `
-            <div class="contact-item">
-              <div class="contact-icon">📍</div>
-              <div><div class="contact-label">Location</div><div class="contact-value">${sme.location}</div></div>
-            </div>
-          ` : ''}
-          ${c.openingHours ? `
-            <div class="contact-item">
-              <div class="contact-icon">🕐</div>
-              <div><div class="contact-label">Hours</div><div class="contact-value">${c.openingHours}</div></div>
-            </div>
-          ` : ''}
-          ${c.contactPhone || sme.socialMedia?.whatsapp ? `
-            <div class="contact-item">
-              <div class="contact-icon">📞</div>
-              <div><div class="contact-label">Phone / WhatsApp</div><div class="contact-value">${c.contactPhone || sme.socialMedia.whatsapp}</div></div>
-            </div>
-          ` : ''}
-        </div>
-        <div class="social-links" style="margin-top:28px">
-          ${fbUrl ? `<a href="${fbUrl}" target="_blank" class="social-btn fb-btn">📘 Facebook</a>` : ''}
-          ${igUrl ? `<a href="${igUrl}" target="_blank" class="social-btn ig-btn">📸 Instagram</a>` : ''}
-          ${waNum ? `<a href="https://wa.me/${waNum}" target="_blank" class="social-btn wa-btn">💬 WhatsApp</a>` : ''}
-        </div>
-      </div>
-      <div class="order-form" id="orderFormSection">
-        <h3>Place an Order</h3>
-        <div id="orderFormWrap">
-          <div class="form-group">
-            <label class="form-label">Your Name *</label>
-            <input type="text" class="form-input" id="f-name" placeholder="Full name" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Phone / WhatsApp *</label>
-            <input type="tel" class="form-input" id="f-phone" placeholder="+xxx xxx xxx xxx" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Product</label>
-            <select class="form-select" id="f-product">
-              <option value="">Select a product...</option>
-              ${products.map(p => `<option value="${p.name}">${p.name} — ${p.price || sme.priceRange}</option>`).join('')}
-              <option value="other">Other / Multiple items</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Quantity</label>
-            <input type="number" class="form-input" id="f-qty" value="1" min="1">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Message / Notes</label>
-            <textarea class="form-textarea" id="f-msg" placeholder="Any special requests or questions..."></textarea>
-          </div>
-          <button class="btn-submit" onclick="submitOrder()">✉️ Send Order Request</button>
-        </div>
-        <div class="success-msg" id="successMsg">
-          <div class="success-icon">🎉</div>
-          <h4>Order Received!</h4>
-          <p>Thank you! We'll contact you within 24 hours to confirm your order and arrange delivery.</p>
-          ${waNum ? `<a href="https://wa.me/${waNum}" target="_blank" style="display:inline-block;margin-top:16px;background:#25d366;color:#fff;padding:12px 24px;border-radius:50px;text-decoration:none;font-weight:600">💬 Chat on WhatsApp</a>` : ''}
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- FOOTER -->
-<footer>
-  <div class="footer-brand">${sme.name}</div>
-  <p class="footer-sub">${c.tagline || sme.productType} · ${sme.location}</p>
-  <div class="footer-links">
-    <a href="#about">About</a>
-    <a href="#products">Products</a>
-    <a href="#contact">Order</a>
-    ${fbUrl ? `<a href="${fbUrl}" target="_blank">Facebook</a>` : ''}
-    ${igUrl ? `<a href="${igUrl}" target="_blank">Instagram</a>` : ''}
-  </div>
-  <p class="footer-copy">© ${new Date().getFullYear()} ${sme.name} · All rights reserved</p>
-</footer>
-
-${waNum ? `<a href="https://wa.me/${waNum}" class="wa-float" target="_blank" title="Chat on WhatsApp">💬</a>` : ''}
-
-<script>
-  function openOrder(productName) {
-    document.getElementById('f-product').value = productName;
-    document.getElementById('orderFormSection').scrollIntoView({ behavior: 'smooth' });
-  }
-  function submitOrder() {
-    const name = document.getElementById('f-name').value.trim();
-    const phone = document.getElementById('f-phone').value.trim();
-    if (!name || !phone) { alert('Please enter your name and phone number.'); return; }
-    document.getElementById('orderFormWrap').style.display = 'none';
-    document.getElementById('successMsg').classList.add('show');
-    ${waNum ? `
-    const product = document.getElementById('f-product').value;
-    const qty = document.getElementById('f-qty').value;
-    const msg = document.getElementById('f-msg').value;
-    const waMsg = encodeURIComponent('Hi! I want to order from ${sme.name}.\\nName: ' + name + '\\nPhone: ' + phone + '\\nProduct: ' + (product || 'See message') + '\\nQty: ' + qty + (msg ? '\\nNote: ' + msg : ''));
-    window.open('https://wa.me/${waNum}?text=' + waMsg, '_blank');
-    ` : ''}
-  }
-  // Smooth nav highlight on scroll
-  const sections = document.querySelectorAll('section[id]');
-  window.addEventListener('scroll', () => {
-    const pos = window.scrollY + 80;
-    sections.forEach(s => {
-      const link = document.querySelector('.nav-links a[href="#' + s.id + '"]');
-      if (!link) return;
-      link.style.color = (pos >= s.offsetTop && pos < s.offsetTop + s.offsetHeight) ? 'var(--primary)' : '';
-    });
+  // Inject actual base64 image data URIs in place of placeholders
+  images.forEach((dataUri, i) => {
+    html = html.replaceAll(`{{IMG_${i}}}`, dataUri);
   });
-</script>
-</body>
-</html>`;
 
   return html;
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ROUTES
