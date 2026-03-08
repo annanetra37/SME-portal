@@ -1083,6 +1083,9 @@ let state = {
   sessionCost: { inputTokens: 0, outputTokens: 0, searches: 0, total: 0 },
 };
 
+// Active scrape EventSources keyed by smeId — used for stop/cancel
+const activeScrapeESs = new Map();
+
 // Pricing constants (must match server.js PRICING)
 const PRICING = { inputPerMTok: 3.00, outputPerMTok: 15.00, searchPer1k: 10.00 };
 
@@ -1848,8 +1851,15 @@ async function buildWebsite(smeId) {
 
 // ─── Manual Photo Scraper ──────────────────────────────────────────────────────
 async function scrapePhotos(smeId) {
+  // If already scraping this SME, do nothing (button becomes Stop)
+  if (activeScrapeESs.has(smeId)) return;
+
   const btn = document.getElementById(`scrapeBtn-${smeId}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = `<div class="spinner"></div> Scraping…`; }
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = `<div class="spinner"></div> <span style="pointer-events:none">Scraping…</span> <span style="margin-left:6px;font-size:11px;opacity:.8">(click to stop)</span>`;
+    btn.onclick = () => stopScraping(smeId);
+  }
 
   const sme = state.currentSme;
   const smeName = sme?.name || 'SME';
@@ -1863,6 +1873,7 @@ async function scrapePhotos(smeId) {
   let scrapeDone = false;
 
   const es = new EventSource(`${API}/smes/${smeId}/build-stream`);
+  activeScrapeESs.set(smeId, es);
 
   es.onopen = async () => {
     try {
@@ -1870,10 +1881,11 @@ async function scrapePhotos(smeId) {
       await api('POST', `/smes/${smeId}/scrape-images?force=true`, {});
     } catch (e) {
       es.close();
+      activeScrapeESs.delete(smeId);
       buildTermLog(smeId, `Failed to start scrape: ${e.message}`, 'error');
       finalizeBuildTerminal(smeId, false);
       toast('Scrape failed to start', 'error');
-      if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; btn.onclick = () => scrapePhotos(smeId); }
     }
   };
 
@@ -1881,6 +1893,11 @@ async function scrapePhotos(smeId) {
     const { msg, type } = JSON.parse(e.data);
     buildTermLog(smeId, msg, type);
   });
+
+  const _resetBtn = () => {
+    if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; btn.onclick = () => scrapePhotos(smeId); }
+    activeScrapeESs.delete(smeId);
+  };
 
   es.addEventListener('scrape-done', e => {
     es.close();
@@ -1895,7 +1912,17 @@ async function scrapePhotos(smeId) {
       toast(`📸 Scrape complete — ${errMsg}`, 'warn');
       buildTermLog(smeId, `Complete — ${errMsg}`, 'warn');
     }
-    if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; }
+    _resetBtn();
+  });
+
+  es.addEventListener('scrape-stopped', () => {
+    if (scrapeDone) return;
+    es.close();
+    scrapeDone = true;
+    finalizeBuildTerminal(smeId, false);
+    buildTermLog(smeId, 'Scrape stopped', 'warn');
+    toast('Scrape stopped', 'warn');
+    _resetBtn();
   });
 
   es.addEventListener('error', e => {
@@ -1903,8 +1930,24 @@ async function scrapePhotos(smeId) {
     es.close();
     buildTermLog(smeId, 'Connection error — scrape may still be running in background', 'warn');
     finalizeBuildTerminal(smeId, false);
-    if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; }
+    _resetBtn();
   });
+}
+
+async function stopScraping(smeId) {
+  const btn = document.getElementById(`scrapeBtn-${smeId}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Stopping…'; }
+
+  // Close the SSE stream from the frontend side
+  const es = activeScrapeESs.get(smeId);
+  if (es) { es.close(); activeScrapeESs.delete(smeId); }
+
+  // Tell the backend to kill the subprocess
+  try { await api('POST', `/smes/${smeId}/scrape-images/stop`); } catch (_) {}
+
+  buildTermLog(smeId, 'Scrape stopped by user', 'warn');
+  finalizeBuildTerminal(smeId, false);
+  if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; btn.onclick = () => scrapePhotos(smeId); }
 }
 
 async function deploySite(smeId) {
