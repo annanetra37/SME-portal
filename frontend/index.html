@@ -810,6 +810,52 @@
     .empty-title { font-family: 'Syne', sans-serif; font-size: 20px; color: var(--text); margin-bottom: 8px; }
     .empty-sub { font-size: 14px; line-height: 1.6; max-width: 380px; margin: 0 auto 24px; }
 
+    /* ─── AI Costs Dashboard ──────────────────────────────── */
+    .costs-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; }
+    .costs-summary-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:14px; margin-bottom:28px; }
+    .cost-summary-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:14px;
+      padding:16px 18px; display:flex; flex-direction:column; gap:4px;
+    }
+    .cscard-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+    .cscard-value { font-size:1.5rem; font-weight:700; color:var(--accent); line-height:1.1; }
+    .cscard-sub   { font-size:10px; color:var(--muted); margin-top:2px; }
+    .costs-section-title { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:12px; }
+    .costs-activity-chart { display:flex; flex-direction:column; gap:8px; margin-bottom:28px; }
+    .ca-row { display:flex; align-items:center; gap:10px; }
+    .ca-label { width:140px; font-size:12px; font-weight:600; flex-shrink:0; }
+    .ca-bar-wrap { flex:1; background:var(--surface); border-radius:99px; height:12px; overflow:hidden; }
+    .ca-bar { height:100%; border-radius:99px; background:var(--accent); transition:width .4s; }
+    .ca-cost { width:60px; font-size:11px; color:var(--muted); text-align:right; flex-shrink:0; }
+    .ca-ops  { width:40px; font-size:10px; color:var(--muted); text-align:right; flex-shrink:0; }
+    .costs-filters {
+      display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; align-items:center;
+    }
+    .costs-filters input, .costs-filters select {
+      background:var(--surface); border:1px solid var(--border); border-radius:8px;
+      color:var(--text); padding:6px 10px; font-size:13px; outline:none;
+    }
+    .costs-filters input:focus, .costs-filters select:focus { border-color:var(--accent); }
+    .costs-table-wrap { overflow-x:auto; }
+    .costs-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .costs-table th {
+      text-align:left; padding:10px 12px; border-bottom:1px solid var(--border);
+      color:var(--muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.4px;
+      white-space:nowrap;
+    }
+    .costs-table th.sortable { cursor:pointer; user-select:none; }
+    .costs-table th.sortable:hover { color:var(--text); }
+    .costs-table td { padding:10px 12px; border-bottom:1px solid var(--border); vertical-align:middle; }
+    .costs-table tr:hover td { background:var(--surface2); }
+    .activity-badge {
+      display:inline-block; padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700;
+      text-transform:uppercase; letter-spacing:.4px;
+    }
+    .ab-website_build { background:#6c63ff22; color:#a29bfe; }
+    .ab-email_gen     { background:#ffd16622; color:#ffd166; }
+    .ab-sme_discovery { background:#43e97b22; color:#43e97b; }
+    .ab-image_scrape  { background:#fd79a822; color:#fd79a8; }
+
     /* ─── Pipeline View ───────────────────────────────────── */
     .pipeline {
       display: grid;
@@ -942,6 +988,9 @@
       <div class="nav-item" onclick="showView('pipeline', this)">
         <span class="icon">🔀</span> Pipeline
       </div>
+      <div class="nav-item" onclick="showView('costs', this)">
+        <span class="icon">💰</span> AI Costs
+      </div>
     </div>
     <div class="nav-section">
       <div class="nav-label">Countries</div>
@@ -1015,6 +1064,79 @@
     <div class="view" id="view-pipeline">
       <div class="pipeline" id="pipelineBoard"></div>
     </div>
+
+    <!-- AI Costs Dashboard -->
+    <div class="view" id="view-costs">
+      <div class="costs-header">
+        <h2 style="margin:0;font-size:1.2rem;font-weight:700">💰 AI Cost Tracking</h2>
+        <button class="btn btn-secondary btn-sm" onclick="loadCosts()">↺ Refresh</button>
+      </div>
+
+      <!-- Summary cards -->
+      <div class="costs-summary-grid" id="costsSummaryGrid">
+        <div class="cost-summary-card">
+          <div class="cscard-label">Total Spent</div>
+          <div class="cscard-value" id="csTotalCost">—</div>
+        </div>
+        <div class="cost-summary-card">
+          <div class="cscard-label">Operations</div>
+          <div class="cscard-value" id="csTotalOps">—</div>
+        </div>
+        <div class="cost-summary-card">
+          <div class="cscard-label">Sonnet Tokens</div>
+          <div class="cscard-value" id="csSonnetTok">—</div>
+          <div class="cscard-sub">in + out</div>
+        </div>
+        <div class="cost-summary-card">
+          <div class="cscard-label">Haiku Tokens</div>
+          <div class="cscard-value" id="csHaikuTok">—</div>
+          <div class="cscard-sub">in + out (3.75× cheaper)</div>
+        </div>
+        <div class="cost-summary-card">
+          <div class="cscard-label">Web Searches</div>
+          <div class="cscard-value" id="csSearches">—</div>
+        </div>
+      </div>
+
+      <!-- By-activity breakdown -->
+      <div class="costs-section-title">Spend by Activity</div>
+      <div id="costsActivityChart" class="costs-activity-chart"></div>
+
+      <!-- Filters -->
+      <div class="costs-filters">
+        <select id="filterActivity" onchange="applyCostFilters()">
+          <option value="">All Activities</option>
+          <option value="website_build">Website Build</option>
+          <option value="email_gen">Email Generation</option>
+          <option value="sme_discovery">SME Discovery</option>
+          <option value="image_scrape">Image Scrape</option>
+        </select>
+        <input type="text" id="filterSme" placeholder="Filter by company…" oninput="applyCostFilters()" style="flex:1;min-width:140px">
+        <input type="date" id="filterFrom" onchange="applyCostFilters()">
+        <input type="date" id="filterTo" onchange="applyCostFilters()">
+        <button class="btn btn-secondary btn-sm" onclick="clearCostFilters()">Clear</button>
+      </div>
+
+      <!-- Cost table -->
+      <div class="costs-table-wrap">
+        <table class="costs-table" id="costsTable">
+          <thead>
+            <tr>
+              <th onclick="sortCosts('created_at')" class="sortable">Date ↕</th>
+              <th onclick="sortCosts('sme_name')" class="sortable">Company ↕</th>
+              <th onclick="sortCosts('activity')" class="sortable">Activity ↕</th>
+              <th>Sonnet Tok</th>
+              <th>Haiku Tok</th>
+              <th>Searches</th>
+              <th onclick="sortCosts('total_cost')" class="sortable">Cost ↕</th>
+            </tr>
+          </thead>
+          <tbody id="costsTableBody">
+            <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -1079,20 +1201,25 @@ let state = {
   currentCountry: null,
   currentSme: null,
   activeView: 'dashboard',
-  // Cost tracking — accumulated across all AI operations this session
-  sessionCost: { inputTokens: 0, outputTokens: 0, searches: 0, total: 0 },
+  sessionCost: { inputTokens: 0, outputTokens: 0, haikuInput: 0, haikuOutput: 0, searches: 0, total: 0 },
 };
 
 // Active scrape EventSources keyed by smeId — used for stop/cancel
 const activeScrapeESs = new Map();
 
 // Pricing constants (must match server.js PRICING)
-const PRICING = { inputPerMTok: 3.00, outputPerMTok: 15.00, searchPer1k: 10.00 };
+const PRICING = {
+  inputPerMTok: 3.00, outputPerMTok: 15.00,
+  haikuInputPerMTok: 0.80, haikuOutputPerMTok: 4.00,
+  searchPer1k: 10.00,
+};
 
 function addCost(cost) {
   if (!cost) return;
   state.sessionCost.inputTokens  += cost.inputTokens  || 0;
   state.sessionCost.outputTokens += cost.outputTokens || 0;
+  state.sessionCost.haikuInput   += cost.haikuInput   || 0;
+  state.sessionCost.haikuOutput  += cost.haikuOutput  || 0;
   state.sessionCost.searches     += cost.searches     || 0;
   state.sessionCost.total        += cost.total        || 0;
   updateCostDisplay();
@@ -1101,10 +1228,18 @@ function addCost(cost) {
 function updateCostDisplay() {
   const el = document.getElementById('sessionCostDisplay');
   if (!el) return;
-  const t = state.sessionCost.total;
+  const sc = state.sessionCost;
+  const t = sc.total;
   const display = t < 0.0001 ? '< $0.0001' : `$${t.toFixed(4)}`;
   el.textContent = display;
-  el.title = `Input: ${state.sessionCost.inputTokens.toLocaleString()} tokens ($${((state.sessionCost.inputTokens/1e6)*PRICING.inputPerMTok).toFixed(4)})\nOutput: ${state.sessionCost.outputTokens.toLocaleString()} tokens ($${((state.sessionCost.outputTokens/1e6)*PRICING.outputPerMTok).toFixed(4)})\nSearches: ${state.sessionCost.searches} ($${((state.sessionCost.searches/1000)*PRICING.searchPer1k).toFixed(4)})\nTotal: ${display}`;
+  el.title = [
+    `Sonnet  in:  ${sc.inputTokens.toLocaleString()} tok  ($${((sc.inputTokens/1e6)*PRICING.inputPerMTok).toFixed(4)})`,
+    `Sonnet  out: ${sc.outputTokens.toLocaleString()} tok  ($${((sc.outputTokens/1e6)*PRICING.outputPerMTok).toFixed(4)})`,
+    `Haiku   in:  ${sc.haikuInput.toLocaleString()} tok  ($${((sc.haikuInput/1e6)*PRICING.haikuInputPerMTok).toFixed(4)})`,
+    `Haiku   out: ${sc.haikuOutput.toLocaleString()} tok  ($${((sc.haikuOutput/1e6)*PRICING.haikuOutputPerMTok).toFixed(4)})`,
+    `Searches:    ${sc.searches}  ($${((sc.searches/1000)*PRICING.searchPer1k).toFixed(4)})`,
+    `Total: ${display}`,
+  ].join('\n');
 }
 
 // ─── Emoji map by industry ─────────────────────────────
@@ -1163,6 +1298,126 @@ function showView(name, navEl) {
   if (navEl) navEl.classList.add('active');
   state.activeView = name;
   if (name === 'pipeline') renderPipeline();
+  if (name === 'costs') loadCosts();
+}
+
+// ─── AI Costs Dashboard ────────────────────────────────────────────────────────
+let costsData   = [];   // all loaded cost rows
+let costsSorted = { key: 'created_at', asc: false };
+
+const ACTIVITY_LABELS = {
+  website_build:  '🌐 Website Build',
+  email_gen:      '✉️  Email Gen',
+  sme_discovery:  '🔍 SME Discovery',
+  image_scrape:   '📸 Image Scrape',
+};
+
+async function loadCosts() {
+  try {
+    // load summary + full list in parallel
+    const [summary, rows] = await Promise.all([
+      api('GET', '/costs/summary'),
+      api('GET', '/costs'),
+    ]);
+    costsData = rows;
+    renderCostsSummary(summary);
+    renderCostsActivityChart(summary.byActivity);
+    renderCostsTable(costsData);
+  } catch {}
+}
+
+function renderCostsSummary(s) {
+  const t = s.totals;
+  const fmt = v => parseFloat(v) < 0.0001 ? '< $0.0001' : `$${parseFloat(v).toFixed(4)}`;
+  document.getElementById('csTotalCost').textContent  = fmt(t.total_cost);
+  document.getElementById('csTotalOps').textContent   = parseInt(t.operations).toLocaleString();
+  document.getElementById('csSonnetTok').textContent  =
+    `${(+t.input_tokens + +t.output_tokens).toLocaleString()}`;
+  document.getElementById('csHaikuTok').textContent   =
+    `${(+t.haiku_input + +t.haiku_output).toLocaleString()}`;
+  document.getElementById('csSearches').textContent   = parseInt(t.web_searches).toLocaleString();
+}
+
+function renderCostsActivityChart(byActivity) {
+  const el = document.getElementById('costsActivityChart');
+  if (!byActivity || !byActivity.length) { el.innerHTML = '<div style="color:var(--muted);font-size:13px">No data yet</div>'; return; }
+  const maxCost = Math.max(...byActivity.map(r => +r.total_cost), 0.000001);
+  el.innerHTML = byActivity.map(r => {
+    const pct = (+r.total_cost / maxCost * 100).toFixed(1);
+    const label = ACTIVITY_LABELS[r.activity] || r.activity;
+    const cost = parseFloat(r.total_cost) < 0.0001 ? '< $0.0001' : `$${parseFloat(r.total_cost).toFixed(4)}`;
+    return `
+      <div class="ca-row">
+        <div class="ca-label">${label}</div>
+        <div class="ca-bar-wrap"><div class="ca-bar" style="width:${pct}%"></div></div>
+        <div class="ca-cost">${cost}</div>
+        <div class="ca-ops">${r.operations}×</div>
+      </div>`;
+  }).join('');
+}
+
+function applyCostFilters() {
+  const activity = document.getElementById('filterActivity').value;
+  const sme      = document.getElementById('filterSme').value.toLowerCase();
+  const from     = document.getElementById('filterFrom').value;
+  const to       = document.getElementById('filterTo').value;
+
+  let filtered = costsData.filter(r => {
+    if (activity && r.activity !== activity) return false;
+    if (sme && !(r.sme_name || '').toLowerCase().includes(sme)) return false;
+    if (from && new Date(r.created_at) < new Date(from)) return false;
+    if (to   && new Date(r.created_at) > new Date(to + 'T23:59:59')) return false;
+    return true;
+  });
+  renderCostsTable(filtered);
+}
+
+function clearCostFilters() {
+  document.getElementById('filterActivity').value = '';
+  document.getElementById('filterSme').value = '';
+  document.getElementById('filterFrom').value = '';
+  document.getElementById('filterTo').value = '';
+  renderCostsTable(costsData);
+}
+
+function sortCosts(key) {
+  if (costsSorted.key === key) {
+    costsSorted.asc = !costsSorted.asc;
+  } else {
+    costsSorted = { key, asc: key !== 'total_cost' };
+  }
+  const sorted = [...costsData].sort((a, b) => {
+    let av = a[key], bv = b[key];
+    if (key === 'total_cost') { av = +av; bv = +bv; }
+    else if (key === 'created_at') { av = new Date(av); bv = new Date(bv); }
+    else { av = (av || '').toLowerCase(); bv = (bv || '').toLowerCase(); }
+    return costsSorted.asc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+  renderCostsTable(sorted);
+}
+
+function renderCostsTable(rows) {
+  const tbody = document.getElementById('costsTableBody');
+  if (!rows || !rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">No cost records yet — run some operations first</td></tr>';
+    return;
+  }
+  const fmtDate = d => new Date(d).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+  const fmtCost = v => parseFloat(v) < 0.0001 ? '< $0.0001' : `$${parseFloat(v).toFixed(4)}`;
+  const fmtNum  = v => (+v).toLocaleString();
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td style="white-space:nowrap;color:var(--muted);font-size:11px">${fmtDate(r.created_at)}</td>
+      <td style="font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        ${r.sme_name || r.country_name || '—'}
+      </td>
+      <td><span class="activity-badge ab-${r.activity}">${ACTIVITY_LABELS[r.activity] || r.activity}</span></td>
+      <td style="font-size:11px;color:var(--muted)">${fmtNum(+r.input_tokens + +r.output_tokens)}</td>
+      <td style="font-size:11px;color:var(--muted)">${fmtNum(+r.haiku_input + +r.haiku_output)}</td>
+      <td style="font-size:11px;color:var(--muted)">${fmtNum(r.web_searches)}</td>
+      <td style="font-weight:700;color:var(--accent)">${fmtCost(r.total_cost)}</td>
+    </tr>`).join('');
 }
 
 
