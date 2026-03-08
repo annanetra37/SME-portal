@@ -808,7 +808,7 @@ function getStockImageUrls(sme, count = 6) {
   );
 }
 
-async function buildWebsiteHtml(sme, content, images = [], ct = null) {
+async function buildWebsiteHtml(sme, content, images = [], ct = null, logFn = null) {
   const c = content || {};
   const fbUrl  = sme.socialMedia?.facebook || '';
   const igUrl  = sme.socialMedia?.instagram || '';
@@ -902,11 +902,12 @@ Choose palette, typography and layout that feel genuinely specific to this type 
 
   // Image placeholders — actual base64 data URIs are injected AFTER generation
   const imgInfo = images.length > 0
-    ? `You have ${images.length} real business photo(s). Use these placeholder tokens exactly as shown:
-  Hero/main image: {{IMG_0}}
-  Product images:  {{IMG_1}}, {{IMG_2}}, ... up to {{IMG_${images.length - 1}}}
-  Use them as: <img src="{{IMG_0}}" ...> or style="background-image:url('{{IMG_0}}')".
-  Distribute them naturally — hero background, product cards, gallery, about section.`
+    ? `You have ${images.length} real business photo(s). MANDATORY: use ALL of them distributed across MULTIPLE sections — never put every image only in the hero.
+  Placeholder tokens (use exactly as written):
+    {{IMG_0}} — hero/main visual (background or prominent img)
+    ${images.slice(1).map((_, i) => `{{IMG_${i+1}}}`).join(', ')} — distribute across product gallery, about section, testimonial background, etc.
+  Usage: <img src="{{IMG_N}}" ...> OR style="background-image:url('{{IMG_N}}')".
+  RULE: every placeholder MUST appear at least once somewhere in the HTML.`
     : `No real photos available. Use rich CSS gradients, patterns, and tasteful emoji/icons instead of <img> tags.`;
 
   const systemPrompt = `You are a world-class web designer and front-end developer who creates \
@@ -915,6 +916,7 @@ never templated.
 
 ABSOLUTE RULES:
 - Output ONLY the complete raw HTML. No markdown fences, no explanation, no comments outside the HTML.
+- The HTML file MUST be fully complete — it MUST end with </html>. NEVER stop generating mid-way.
 - Single self-contained file: all CSS and JS must be inline (inside <style> and <script> tags).
 - Fully mobile-responsive (use media queries or CSS grid/flex).
 - No Lorem Ipsum — every word of copy must be real, specific to this business.
@@ -923,7 +925,12 @@ unmistakably industry-specific — not a generic business template with colours 
 - MUST include a working order/contact form that, on submit, opens WhatsApp with pre-filled message \
 (if WhatsApp number provided) or shows a confirmation message.
 - Social media links (Facebook, Instagram) must be included if provided.
-- Include smooth scroll, subtle entrance animations (CSS or Intersection Observer), hover effects.`;
+- MUST include ALL sections listed in the design direction — no section may be omitted or left skeletal.
+- If you use a CSS class like .reveal for scroll animations, you MUST include the JavaScript \
+IntersectionObserver code that activates it. Never add CSS animation classes without the script.
+- MANDATORY <script> block before </body>: Include IntersectionObserver scroll-reveal for '.reveal' \
+elements, navbar scroll-shadow toggle on window scroll, and mobile hamburger menu toggle. \
+This script is REQUIRED even if the rest of the page has no JS.`;
 
   const userPrompt = `Build a complete, unique, production-ready website for this business.
 
@@ -971,9 +978,67 @@ ${designGuide}
 3. Instagram link: ${igUrl || 'none'}
 4. Use Google Fonts that match the industry personality (specify in <link> tag)
 5. Respect the suggested brand colours if provided, otherwise choose perfect industry-appropriate ones
-6. Every product must show its name, description, price, and an "Order" / "Enquire" CTA`;
+6. Every product must show its name, description, price, and an "Order" / "Enquire" CTA
+7. MANDATORY — include this exact <script> block immediately before </body>:
+<script>
+  // Scroll reveal
+  document.querySelectorAll('.reveal').forEach(el => {
+    new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+    }, { threshold: 0.12 }).observe(el);
+  });
+  // Navbar scroll shadow
+  window.addEventListener('scroll', () => {
+    const nav = document.querySelector('nav, #navbar, .navbar, header nav');
+    if (nav) nav.classList.toggle('scrolled', window.scrollY > 60);
+  });
+  // Mobile menu
+  const ham = document.getElementById('hamburger') || document.querySelector('.hamburger, .menu-toggle');
+  const mob = document.getElementById('mobileMenu') || document.querySelector('.mobile-menu, .mobile-nav');
+  if (ham && mob) {
+    ham.addEventListener('click', () => mob.classList.toggle('open'));
+    mob.querySelectorAll('a').forEach(a => a.addEventListener('click', () => mob.classList.remove('open')));
+  }
+</script>
+8. The file MUST end with </body></html> — generate the entire page without stopping early.`;
 
-  let html = await claude(systemPrompt, userPrompt, 16000, ct);
+  const MAX_TOKENS = 32000;
+
+  let html;
+
+  if (logFn) {
+    // Streaming mode — send live progress updates during generation
+    logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: MAX_TOKENS,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    html = '';
+    let lastLogAt = Date.now();
+
+    stream.on('text', (text) => {
+      html += text;
+      const now = Date.now();
+      if (now - lastLogAt > 2500) {
+        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
+        lastLogAt = now;
+      }
+    });
+
+    await stream.finalMessage().then(msg => {
+      if (ct && msg.usage) {
+        ct.inputTokens  += msg.usage.input_tokens  || 0;
+        ct.outputTokens += msg.usage.output_tokens || 0;
+      }
+    });
+
+    logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
+  } else {
+    html = await claude(systemPrompt, userPrompt, MAX_TOKENS, ct);
+  }
 
   // Strip any accidental markdown fences
   html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -1145,18 +1210,51 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
 
       // ── Phase 3: Build HTML with Claude ────────────────────────────────────
       L(`PHASE 3 — Building website HTML with Claude AI (${images.length} images)…`, 'phase');
-      let html = await buildWebsiteHtml(sme, content, images, ct);
+      let html = await buildWebsiteHtml(sme, content, images, ct, (msg) => L(msg, 'info'));
       L(`HTML generated — ${Math.round(html.length / 1024)}kb`, 'ok');
 
       // Validate HTML completeness
       if (!html || html.length < 500) {
         throw new Error('Website generation produced empty or too-short HTML');
       }
-      if (!html.includes('</body>') && !html.includes('</html>')) {
-        L(`HTML appears truncated — rebuilding…`, 'warn');
-        html = await buildWebsiteHtml(sme, content, images, ct);
-        if (!html || html.length < 500) throw new Error('Rebuild also produced invalid HTML');
-        L(`Rebuild successful — ${Math.round(html.length / 1024)}kb`, 'ok');
+
+      // Truncation detection — HTML must end with </html>
+      const trimmedHtml = html.trimEnd();
+      const isComplete = trimmedHtml.endsWith('</html>') || trimmedHtml.endsWith('</html>\n');
+      if (!isComplete) {
+        L(`HTML appears truncated (${Math.round(html.length / 1024)}kb, no closing </html>) — requesting continuation…`, 'warn');
+        const tailContext = html.slice(-3000);
+        const completion = await claude(
+          'You are completing a truncated HTML website. Output ONLY the continuation — start from where it was cut off and end with </body></html>. No preamble, no markdown fences.',
+          `This HTML file was cut off mid-generation. Continue from exactly where it stopped:\n\n${tailContext}\n\nFinish all remaining sections and close with </body></html>.`,
+          16000, ct
+        );
+        const cleanCompletion = completion.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
+        html = html + '\n' + cleanCompletion;
+        L(`Continuation added — total: ${Math.round(html.length / 1024)}kb`, 'ok');
+      }
+
+      // Safety net: auto-inject scroll reveal script if missing
+      if (!html.includes('IntersectionObserver') && html.includes('.reveal')) {
+        L(`Scroll reveal script missing — auto-injecting…`, 'warn');
+        const revealScript = `<script>
+  document.querySelectorAll('.reveal').forEach(el => {
+    new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+    }, { threshold: 0.12 }).observe(el);
+  });
+  window.addEventListener('scroll', () => {
+    const nav = document.querySelector('nav, #navbar, .navbar, header nav');
+    if (nav) nav.classList.toggle('scrolled', window.scrollY > 60);
+  });
+  const ham = document.getElementById('hamburger') || document.querySelector('.hamburger, .menu-toggle');
+  const mob = document.getElementById('mobileMenu') || document.querySelector('.mobile-menu, .mobile-nav');
+  if (ham && mob) {
+    ham.addEventListener('click', () => mob.classList.toggle('open'));
+    mob.querySelectorAll('a').forEach(a => a.addEventListener('click', () => mob.classList.remove('open')));
+  }
+<\/script>`;
+        html = html.replace(/<\/body>/i, revealScript + '\n</body>');
       }
 
       // ── Save to DB ─────────────────────────────────────────────────────────
