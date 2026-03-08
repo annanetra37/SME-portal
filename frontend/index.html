@@ -67,6 +67,7 @@
     .tline.skip  .tmsg{color:#ff6b6b}
     .tline.warn  .tmsg{color:#ffd166}
     .tline.sme   .tmsg{color:#00d4ff;font-weight:600}
+    .tline.cost  .tmsg{color:#ffd166;font-style:italic}
     .tcursor{display:inline-block;width:7px;height:13px;background:#b090ff;vertical-align:middle;margin-left:3px;animation:tblink 1s step-end infinite}
     @keyframes tblink{0%,100%{opacity:1}50%{opacity:0}}
     .terminal-footer{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-top:1px solid #1e1e35;font-family:monospace;font-size:11px;color:#444}
@@ -936,6 +937,11 @@
           <div class="stat-value" id="stat-emails">0</div>
           <div class="stat-label">Emails Ready</div>
         </div>
+        <div class="stat-card" style="cursor:help" id="costCard">
+          <div class="stat-icon">💰</div>
+          <div class="stat-value" id="sessionCostDisplay" style="font-size:1.1rem">$0.0000</div>
+          <div class="stat-label">Session AI Cost</div>
+        </div>
       </div>
 
       <div id="dashboardContent">
@@ -1023,7 +1029,30 @@ let state = {
   currentCountry: null,
   currentSme: null,
   activeView: 'dashboard',
+  // Cost tracking — accumulated across all AI operations this session
+  sessionCost: { inputTokens: 0, outputTokens: 0, searches: 0, total: 0 },
 };
+
+// Pricing constants (must match server.js PRICING)
+const PRICING = { inputPerMTok: 3.00, outputPerMTok: 15.00, searchPer1k: 10.00 };
+
+function addCost(cost) {
+  if (!cost) return;
+  state.sessionCost.inputTokens  += cost.inputTokens  || 0;
+  state.sessionCost.outputTokens += cost.outputTokens || 0;
+  state.sessionCost.searches     += cost.searches     || 0;
+  state.sessionCost.total        += cost.total        || 0;
+  updateCostDisplay();
+}
+
+function updateCostDisplay() {
+  const el = document.getElementById('sessionCostDisplay');
+  if (!el) return;
+  const t = state.sessionCost.total;
+  const display = t < 0.0001 ? '< $0.0001' : `$${t.toFixed(4)}`;
+  el.textContent = display;
+  el.title = `Input: ${state.sessionCost.inputTokens.toLocaleString()} tokens ($${((state.sessionCost.inputTokens/1e6)*PRICING.inputPerMTok).toFixed(4)})\nOutput: ${state.sessionCost.outputTokens.toLocaleString()} tokens ($${((state.sessionCost.outputTokens/1e6)*PRICING.outputPerMTok).toFixed(4)})\nSearches: ${state.sessionCost.searches} ($${((state.sessionCost.searches/1000)*PRICING.searchPer1k).toFixed(4)})\nTotal: ${display}`;
+}
 
 // ─── Emoji map by industry ─────────────────────────────
 const industryEmoji = {
@@ -1263,19 +1292,23 @@ async function searchSMEs(countryId) {
   });
 
   es.addEventListener('done', e => {
-    const { total, verified, illustrative, elapsedSeconds } = JSON.parse(e.data);
+    const { total, verified, illustrative, elapsedSeconds, cost } = JSON.parse(e.data);
+    if (cost) addCost(cost);
     es.close();
     document.getElementById('tBody')?.querySelector('.tcursor')?.remove();
     const tStatus = document.getElementById('tStatus');
     if (tStatus) { tStatus.className = 'terminal-status done'; tStatus.textContent = `● done in ${elapsedSeconds}s`; }
     const lh = document.getElementById('liveHdr');
+    const costBadge = cost ? `<span style="font-size:11px;color:var(--warning);margin-left:8px">💰 ${cost.display}</span>` : '';
     if (lh) lh.innerHTML = `
       <span style="color:var(--success)">✅ Search complete — ${total} SMEs found in ${elapsedSeconds}s</span>
       ${verified     ? `<span class="badge-v">${verified} verified</span>` : ''}
-      ${illustrative ? `<span class="badge-i">${illustrative} illustrative</span>` : ''}`;
+      ${illustrative ? `<span class="badge-i">${illustrative} illustrative</span>` : ''}
+      ${costBadge}`;
     btn.disabled = false;
     btn.innerHTML = `🔍 Search More SMEs`;
-    toast(`Found ${total} new SMEs in ${elapsedSeconds}s!`, 'success');
+    const costMsg = cost ? ` · AI cost: ${cost.display}` : '';
+    toast(`Found ${total} new SMEs in ${elapsedSeconds}s!${costMsg}`, 'success');
     // Auto-collapse terminal after 6s
     setTimeout(() => {
       const t = document.getElementById('agentTerminal');
@@ -1572,11 +1605,12 @@ function renderWebsiteTab(sme) {
         loading="lazy"
       ></iframe>
     </div>
-    <div style="display:flex;gap:10px;margin-top:12px">
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center">
       <a class="btn btn-secondary btn-sm" href="${downloadUrl}" target="_blank">⬇️ Download HTML</a>
       <a class="btn btn-secondary btn-sm" href="${previewUrl}" target="_blank">↗️ Open Full Tab</a>
       <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')">🔄 Rebuild</button>
       ${!deployedUrl ? `<button class="btn btn-success btn-sm" onclick="deploySite('${sme.id}')">🚀 Deploy Site</button>` : ''}
+      ${site.buildCost ? `<span style="font-size:11px;color:var(--muted);margin-left:auto" title="Input: ${site.buildCost.inputTokens.toLocaleString()} tokens · Output: ${site.buildCost.outputTokens.toLocaleString()} tokens · ${site.buildCost.searches} searches">💰 Build cost: <strong style="color:var(--warning)">${site.buildCost.display}</strong></span>` : ''}
     </div>
   `;
 }
@@ -1598,7 +1632,8 @@ function renderEmailTab(sme) {
   }
 
   el.innerHTML = `
-    <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px;gap:8px;align-items:center">
+      ${email.cost ? `<span style="font-size:11px;color:var(--muted)" title="Input: ${email.cost.inputTokens.toLocaleString()} tokens · Output: ${email.cost.outputTokens.toLocaleString()} tokens">💰 <strong style="color:var(--warning)">${email.cost.display}</strong></span>` : ''}
       <button class="copy-btn" onclick="copyText(document.getElementById('emailBodyText').textContent)">Copy Body</button>
       <button class="btn btn-secondary btn-sm" onclick="generateEmail('${sme.id}')">🔄 Regenerate</button>
     </div>
@@ -1626,9 +1661,10 @@ async function buildWebsite(smeId) {
   toast('Website Builder Agent running...', 'info');
 
   try {
-    await api('POST', `/smes/${smeId}/build-website`);
+    const buildResult = await api('POST', `/smes/${smeId}/build-website`);
+    if (buildResult?.cost) addCost(buildResult.cost);
     const site = await api('GET', `/smes/${smeId}/website`);
-    state.websites[smeId] = site;
+    state.websites[smeId] = { ...site, buildCost: buildResult?.cost || null };
 
     // Update local sme status
     for (const list of Object.values(state.smes)) {
@@ -1636,7 +1672,8 @@ async function buildWebsite(smeId) {
       if (idx !== -1) { list[idx].status = 'website_built'; break; }
     }
 
-    toast('✨ Website built successfully!', 'success');
+    const costMsg = buildResult?.cost ? ` · AI cost: ${buildResult.cost.display}` : '';
+    toast(`✨ Website built successfully!${costMsg}`, 'success');
     if (state.currentSme?.id === smeId) {
       renderDetailActions(state.currentSme);
       renderWebsiteTab(state.currentSme);
@@ -1679,15 +1716,17 @@ async function generateEmail(smeId) {
   toast('Marketing Agent composing email...', 'info');
 
   try {
-    const email = await api('POST', `/smes/${smeId}/generate-email`);
-    state.emails[smeId] = email;
+    const emailResult = await api('POST', `/smes/${smeId}/generate-email`);
+    if (emailResult?.cost) addCost(emailResult.cost);
+    state.emails[smeId] = emailResult;
 
     for (const list of Object.values(state.smes)) {
       const idx = list.findIndex(s => s.id === smeId);
       if (idx !== -1) { list[idx].status = 'email_ready'; break; }
     }
 
-    toast('✉️ Email generated!', 'success');
+    const costMsg = emailResult?.cost ? ` · AI cost: ${emailResult.cost.display}` : '';
+    toast(`✉️ Email generated!${costMsg}`, 'success');
     if (state.currentSme?.id === smeId) {
       renderDetailActions(state.currentSme);
       renderEmailTab(state.currentSme);
