@@ -61,8 +61,8 @@ async function ensureSchema() {
       CONSTRAINT emails_sme_id_key UNIQUE (sme_id)
     );
     CREATE TABLE IF NOT EXISTS sme_images (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      sme_id UUID NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
+      id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+      sme_id TEXT NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
       data TEXT NOT NULL,
       platform TEXT, source_url TEXT, caption TEXT,
       scraped_at TIMESTAMPTZ DEFAULT NOW()
