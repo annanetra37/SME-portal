@@ -109,21 +109,59 @@ app.get('/api/countries/:id/search-stream', (req, res) => {
   req.on('close', () => { clearInterval(hb); sseClients.delete(String(req.params.id)); });
 });
 
+// ─── Cost tracking ────────────────────────────────────────────────────────────
+// Pricing for claude-sonnet-4-6 (per Anthropic pricing page)
+const PRICING = {
+  inputPerMTok:  3.00,   // $3.00 per million input tokens
+  outputPerMTok: 15.00,  // $15.00 per million output tokens
+  searchPer1k:   10.00,  // $10.00 per 1000 web search calls
+};
+
+function newCost() {
+  return { inputTokens: 0, outputTokens: 0, searches: 0 };
+}
+
+function costSummary(ct) {
+  const inCost   = (ct.inputTokens / 1_000_000) * PRICING.inputPerMTok;
+  const outCost  = (ct.outputTokens / 1_000_000) * PRICING.outputPerMTok;
+  const srchCost = (ct.searches    / 1_000)      * PRICING.searchPer1k;
+  const total    = inCost + outCost + srchCost;
+  return {
+    inputTokens:  ct.inputTokens,
+    outputTokens: ct.outputTokens,
+    searches:     ct.searches,
+    inputCost:    +inCost.toFixed(6),
+    outputCost:   +outCost.toFixed(6),
+    searchCost:   +srchCost.toFixed(6),
+    total:        +total.toFixed(6),
+    display:      total < 0.0001 ? `< $0.0001` : `$${total.toFixed(4)}`,
+  };
+}
+
 // ─── AI helpers ──────────────────────────────────────────────────────────────
-async function claude(system, user, maxTokens = 3000) {
+async function claude(system, user, maxTokens = 3000, ct = null) {
   const r = await anthropic.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: maxTokens,
     system, messages: [{ role: 'user', content: user }],
   });
+  if (ct && r.usage) {
+    ct.inputTokens  += r.usage.input_tokens  || 0;
+    ct.outputTokens += r.usage.output_tokens || 0;
+  }
   return r.content[0].text;
 }
 
-async function webSearch(query) {
+async function webSearch(query, ct = null) {
+  if (ct) ct.searches += 1;
   const r = await anthropic.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: 6000,
     tools: [{ type: 'web_search_20250305', name: 'web_search' }],
     messages: [{ role: 'user', content: query }],
   });
+  if (ct && r.usage) {
+    ct.inputTokens  += r.usage.input_tokens  || 0;
+    ct.outputTokens += r.usage.output_tokens || 0;
+  }
   if (r.stop_reason === 'tool_use') {
     const toolResults = r.content.filter(b => b.type === 'tool_use')
       .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'results retrieved' }));
@@ -136,6 +174,10 @@ async function webSearch(query) {
         { role: 'user', content: toolResults },
       ],
     });
+    if (ct && r2.usage) {
+      ct.inputTokens  += r2.usage.input_tokens  || 0;
+      ct.outputTokens += r2.usage.output_tokens || 0;
+    }
     return r2.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   }
   return r.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
@@ -185,6 +227,7 @@ async function runSearchPipeline(countryId, countryName) {
   const TIMEOUT = 4 * 60 * 1000;
   const start = Date.now();
   const inserted = [];
+  const ct = newCost();
 
   // ── FIX #2: Load existing names from DB to avoid duplicates ──────────────
   const { rows: existing } = await pool.query(
@@ -205,7 +248,7 @@ async function runSearchPipeline(countryId, countryName) {
   ];
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
-  const results = await Promise.allSettled(queries.map(q => webSearch(q)));
+  const results = await Promise.allSettled(queries.map(q => webSearch(q, ct)));
   const combinedText = results
     .map(r => r.status === 'fulfilled' ? r.value : '')
     .join('\n\n===\n\n')
@@ -228,7 +271,7 @@ Rules:
 Return JSON (max 30):
 [{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/beauty/etc","confidence":"high/medium/low"}]
 If nothing, return [].`,
-    4000
+    4000, ct
   );
 
   let candidates = [];
@@ -241,16 +284,16 @@ If nothing, return [].`,
   if (candidates.length < 5) {
     log(countryId, 'Too few candidates — running broader fallback search...', 'warn');
     const fbResults = await Promise.allSettled([
-      webSearch(`${countryName} small business facebook instagram seller 2024`),
-      webSearch(`${countryName} entrepreneur social media shop no website`),
-      webSearch(`${countryName} local artisan food clothing beauty online social media`),
+      webSearch(`${countryName} small business facebook instagram seller 2024`, ct),
+      webSearch(`${countryName} entrepreneur social media shop no website`, ct),
+      webSearch(`${countryName} local artisan food clothing beauty online social media`, ct),
     ]);
     const fbText = fbResults.map(r => r.status === 'fulfilled' ? r.value : '').join('\n===\n').slice(0, 12000);
     const fbRaw = await claude('Return ONLY valid JSON arrays.',
       `Extract small business names from ${countryName} in these results:
 ${fbText}
 Return: [{"name":"name","fbUrl":null,"igUrl":null,"industryHint":"guess","confidence":"low"}]
-If nothing, return [].`, 2000);
+If nothing, return [].`, 2000, ct);
     try {
       const extra = JSON.parse(fbRaw.replace(/```json\n?|\n?```/g, '').trim());
       if (Array.isArray(extra)) candidates = [...candidates, ...extra];
@@ -287,7 +330,7 @@ If nothing, return [].`, 2000);
     log(countryId, `  Batch ${Math.floor(i / PARALLEL) + 1}: verifying ${batch.map(c => '"' + c.name + '"').join(', ')}...`);
 
     const batchResults = await Promise.allSettled(
-      batch.map(c => verifyAndEnrich(c, countryName))
+      batch.map(c => verifyAndEnrich(c, countryName, ct))
     );
 
     for (const result of batchResults) {
@@ -324,7 +367,7 @@ If nothing, return [].`, 2000);
   // Fallback illustrative profiles
   if (inserted.length === 0) {
     log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
-    const profiles = await generateIllustrative(countryName);
+    const profiles = await generateIllustrative(countryName, ct);
     for (const p of profiles) {
       const key = p.name.toLowerCase().trim();
       if (existingNames.has(key)) continue;
@@ -342,21 +385,24 @@ If nothing, return [].`, 2000);
   const illus = inserted.filter(s => s.isIllustrative).length;
   const elapsed = Math.round((Date.now() - start) / 1000);
 
+  const cost = costSummary(ct);
   log(countryId, `━━━ COMPLETE in ${elapsed}s ━━━`, 'phase');
   if (verified > 0) log(countryId, `${verified} verified real businesses added`, 'ok');
   if (illus > 0)    log(countryId, `${illus} illustrative profiles added`, 'warn');
+  log(countryId, `💰 AI cost: ${cost.display}  (${cost.inputTokens.toLocaleString()} in / ${cost.outputTokens.toLocaleString()} out tokens, ${cost.searches} searches)`, 'cost');
 
-  sse(countryId, 'done', { total: inserted.length, verified, illustrative: illus, elapsedSeconds: elapsed });
+  sse(countryId, 'done', { total: inserted.length, verified, illustrative: illus, elapsedSeconds: elapsed, cost });
   return inserted;
 }
 
-async function verifyAndEnrich(candidate, countryName) {
+async function verifyAndEnrich(candidate, countryName, ct = null) {
   const { name, fbUrl, igUrl, industryHint, confidence } = candidate;
   let searchText = '';
 
   if (!fbUrl && !igUrl || confidence !== 'high') {
     searchText = await webSearch(
-      `"${name}" ${countryName} facebook instagram -site:yellowpages -site:yelp -site:tripadvisor`
+      `"${name}" ${countryName} facebook instagram -site:yellowpages -site:yelp -site:tripadvisor`,
+      ct
     ).catch(() => '');
   }
 
@@ -402,7 +448,7 @@ Return ONLY this JSON:
   "languages": ["local language", "English"],
   "isIllustrative": false
 }`,
-    2000
+    2000, ct
   );
 
   const profile = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
@@ -419,12 +465,12 @@ Return ONLY this JSON:
   return { skipped: false, profile };
 }
 
-async function generateIllustrative(countryName) {
+async function generateIllustrative(countryName, ct = null) {
   const raw = await claude('Return ONLY valid JSON arrays.',
     `Generate 8 realistic illustrative SME profiles for ${countryName}.
 ILLUSTRATIVE only — not verified real businesses. Set isIllustrative=true, all socialMedia URLs to null.
 Return JSON array: [{"name":str,"industry":str,"productType":str,"description":str,"location":"City, ${countryName}","foundedYear":null,"employeeCount":"1-5","monthlyRevenue":"$500-$2000","socialMedia":{"facebook":null,"instagram":null,"whatsapp":null},"contactEmail":null,"ownerName":str,"followers":{"facebook":800,"instagram":500},"products":[str,str,str],"priceRange":"$5-$50","tags":[str,str,str],"noWebsiteReason":"Uses Instagram DMs for all orders","opportunityScore":72,"languages":["local","English"],"isIllustrative":true}]`,
-    5000);
+    5000, ct);
   return JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
 }
 
@@ -532,18 +578,18 @@ async function scrapeAndStoreImages(sme, maxImages = 15) {
 // WEBSITE BUILDER — scrapes social media content first, then builds rich site
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function scrapeSocialContent(sme) {
+async function scrapeSocialContent(sme, ct = null) {
   const searches = [];
 
   if (sme.socialMedia?.facebook) {
-    searches.push(webSearch(`site:facebook.com "${sme.name}" products posts about bio ${sme.location}`));
-    searches.push(webSearch(`"${sme.name}" facebook "${sme.location}" photos posts products prices`));
+    searches.push(webSearch(`site:facebook.com "${sme.name}" products posts about bio ${sme.location}`, ct));
+    searches.push(webSearch(`"${sme.name}" facebook "${sme.location}" photos posts products prices`, ct));
   }
   if (sme.socialMedia?.instagram) {
-    searches.push(webSearch(`site:instagram.com "${sme.name}" products posts bio ${sme.location}`));
+    searches.push(webSearch(`site:instagram.com "${sme.name}" products posts bio ${sme.location}`, ct));
   }
   // General brand search
-  searches.push(webSearch(`"${sme.name}" ${sme.location} ${sme.industry} products prices reviews`));
+  searches.push(webSearch(`"${sme.name}" ${sme.location} ${sme.industry} products prices reviews`, ct));
 
   const results = await Promise.allSettled(searches);
   const rawText = results
@@ -596,7 +642,7 @@ Return ONLY this JSON:
   "uniqueSellingPoints": ["USP 1", "USP 2", "USP 3"],
   "realImages": ["https://actual-image-url-copied-verbatim-from-search-results.jpg"]
 }`,
-    3000
+    3000, ct
   );
 
   try {
@@ -607,20 +653,23 @@ Return ONLY this JSON:
 }
 
 // Dedicated image URL scraper — browses actual social media pages for og:image + CDN URLs
-async function scrapeImages(sme) {
+async function scrapeImages(sme, ct = null) {
   // Browse the actual social media pages directly so Claude can read og:image meta tags
   const fetches = [
     sme.socialMedia?.facebook && webSearch(
-      `Visit ${sme.socialMedia.facebook} and extract every image URL from: og:image meta tag, cover photo, profile picture, and any product photos visible on the page. Return only the raw https:// URLs.`
+      `Visit ${sme.socialMedia.facebook} and extract every image URL from: og:image meta tag, cover photo, profile picture, and any product photos visible on the page. Return only the raw https:// URLs.`,
+      ct
     ),
     sme.socialMedia?.facebook && webSearch(
-      `Visit ${sme.socialMedia.facebook}/photos and list all photo image URLs you can see`
+      `Visit ${sme.socialMedia.facebook}/photos and list all photo image URLs you can see`,
+      ct
     ),
     sme.socialMedia?.instagram && webSearch(
-      `Visit ${sme.socialMedia.instagram} and extract the og:image URL, profile picture URL, and any post thumbnail URLs from the page HTML`
+      `Visit ${sme.socialMedia.instagram} and extract the og:image URL, profile picture URL, and any post thumbnail URLs from the page HTML`,
+      ct
     ),
     // Broad filetype search — sometimes returns directly accessible image URLs
-    webSearch(`"${sme.name}" ${sme.location} product photo filetype:jpg OR filetype:png`),
+    webSearch(`"${sme.name}" ${sme.location} product photo filetype:jpg OR filetype:png`, ct),
   ].filter(Boolean);
 
   const results = await Promise.allSettled(fetches);
@@ -644,7 +693,7 @@ ${rawText}
 
 Return ONLY valid JSON: ["https://url1", "https://url2", ...] — up to 12 raw image URLs.
 If zero found, return [].`,
-    800
+    800, ct
   );
 
   try {
@@ -709,7 +758,7 @@ function getStockImageUrls(sme, count = 6) {
   );
 }
 
-async function buildWebsiteHtml(sme, content, images = []) {
+async function buildWebsiteHtml(sme, content, images = [], ct = null) {
   const c = content || {};
   const fbUrl  = sme.socialMedia?.facebook || '';
   const igUrl  = sme.socialMedia?.instagram || '';
@@ -874,7 +923,7 @@ ${designGuide}
 5. Respect the suggested brand colours if provided, otherwise choose perfect industry-appropriate ones
 6. Every product must show its name, description, price, and an "Order" / "Enquire" CTA`;
 
-  let html = await claude(systemPrompt, userPrompt, 16000);
+  let html = await claude(systemPrompt, userPrompt, 16000, ct);
 
   // Strip any accidental markdown fences
   html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -946,10 +995,11 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
   const sme = normalizeSme(rows[0]);
 
   try {
+    const ct = newCost();
     console.log(`🌐 Building website for "${sme.name}"…`);
 
     // Step 1: Scrape social media text content (tagline, products, brand colors, etc.)
-    const content = await scrapeSocialContent(sme);
+    const content = await scrapeSocialContent(sme, ct);
     console.log(`  ✅ Social content scraped for "${sme.name}"`);
 
     // Step 2: Use pre-scraped images from DB (set by /scrape-images endpoint or previous build)
@@ -997,7 +1047,7 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
     }
 
     // Step 3: Build fully unique, industry-tailored HTML with Claude
-    let html = await buildWebsiteHtml(sme, content, images);
+    let html = await buildWebsiteHtml(sme, content, images, ct);
     console.log(`  ✅ HTML built (${Math.round(html.length / 1024)}kb)`);
 
     // Validate HTML is not truncated — a cut-off <style> block renders as blank page
@@ -1006,9 +1056,12 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
     }
     if (!html.includes('</body>') && !html.includes('</html>')) {
       console.warn('  ⚠️  HTML appears truncated (no closing tags) — attempting rebuild…');
-      html = await buildWebsiteHtml(sme, content, images);
+      html = await buildWebsiteHtml(sme, content, images, ct);
       if (!html || html.length < 500) throw new Error('Rebuild also failed to produce valid HTML');
     }
+
+    const cost = costSummary(ct);
+    console.log(`  💰 Website build cost: ${cost.display} (${cost.inputTokens.toLocaleString()} in / ${cost.outputTokens.toLocaleString()} out tokens, ${cost.searches} searches)`);
 
     await pool.query(
       `INSERT INTO websites (sme_id, html, social_content) VALUES ($1,$2,$3)
@@ -1016,7 +1069,7 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
       [sme.id, html, JSON.stringify(content || {})]
     );
     await pool.query(`UPDATE smes SET status='website_built' WHERE id=$1`, [sme.id]);
-    res.json({ ok: true, imagesUsed: images.length, contentScraped: !!content });
+    res.json({ ok: true, imagesUsed: images.length, contentScraped: !!content, cost });
   } catch (e) {
     console.error('Website builder error:', e);
     res.status(500).json({ error: e.message });
@@ -1116,6 +1169,7 @@ app.post('/api/smes/:id/generate-email', async (req, res) => {
   const { rows: sr } = await pool.query('SELECT deployed_url FROM websites WHERE sme_id=$1', [sme.id]);
   const url = sr[0]?.deployed_url || '[WEBSITE_LINK]';
   try {
+    const ct = newCost();
     const raw = await claude(
       'World-class B2B copywriter. Return ONLY valid JSON {"subject":"...","body":"..."}.',
       `Write a personalized warm outreach email (max 220 words):
@@ -1125,15 +1179,16 @@ Active on: ${Object.entries(sme.socialMedia || {}).filter(([, v]) => v).map(([k]
 Website we built: ${url} | Followers: FB ${sme.followers?.facebook || 0} / IG ${sme.followers?.instagram || 0}
 Offer: Free website (${url}). Option A: 10% per sale, website free. Option B: monthly fee.
 Requirements: curiosity subject, reference specific products, mention the no-website gap, include live link, warm tone.`,
-      2000
+      2000, ct
     );
     const email = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+    const cost = costSummary(ct);
     await pool.query(
       `INSERT INTO emails (sme_id,subject,body) VALUES ($1,$2,$3) ON CONFLICT (sme_id) DO UPDATE SET subject=$2,body=$3,created_at=NOW()`,
       [sme.id, email.subject, email.body]
     );
     await pool.query(`UPDATE smes SET status='email_ready' WHERE id=$1`, [sme.id]);
-    res.json(email);
+    res.json({ ...email, cost });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
