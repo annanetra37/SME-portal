@@ -98,6 +98,18 @@ function log(cid, msg, type = 'info') {
   sse(cid, 'log', { msg, type, ts: Date.now() });
 }
 
+// ─── SME-level SSE (for website build + image scrape streaming) ───────────────
+const smeSseClients = new Map();
+function smeSse(smeId, event, data) {
+  const res = smeSseClients.get(String(smeId));
+  if (!res) return;
+  try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch (_) {}
+}
+function smeLog(smeId, msg, type = 'info') {
+  console.log(`  [build:${String(smeId).slice(0, 8)}] ${msg}`);
+  smeSse(smeId, 'log', { msg, type, ts: Date.now() });
+}
+
 app.get('/api/countries/:id/search-stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -107,6 +119,18 @@ app.get('/api/countries/:id/search-stream', (req, res) => {
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch (_) { clearInterval(hb); } }, 20000);
   sseClients.set(String(req.params.id), res);
   req.on('close', () => { clearInterval(hb); sseClients.delete(String(req.params.id)); });
+});
+
+// SSE stream for SME-level operations (website build, image scrape)
+app.get('/api/smes/:id/build-stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+  const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch (_) { clearInterval(hb); } }, 20000);
+  smeSseClients.set(String(req.params.id), res);
+  req.on('close', () => { clearInterval(hb); smeSseClients.delete(String(req.params.id)); });
 });
 
 // ─── Cost tracking ────────────────────────────────────────────────────────────
@@ -493,7 +517,7 @@ async function getStoredImages(smeId) {
  * Run the Python scraper for a single social media URL.
  * Returns an array of { path, platform, source_url, caption } objects.
  */
-function runPyScraper(url, maxImages) {
+function runPyScraper(url, maxImages, logCb = null) {
   return new Promise((resolve) => {
     const outDir = mkdtempSync(path.join(tmpdir(), 'sme-scraper-'));
     const scraperPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'scraper.py');
@@ -503,7 +527,13 @@ function runPyScraper(url, maxImages) {
     });
 
     let stderr = '';
-    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.stderr.on('data', d => {
+      const chunk = d.toString();
+      stderr += chunk;
+      if (logCb) {
+        chunk.split('\n').filter(l => l.trim()).forEach(l => logCb(l.trim()));
+      }
+    });
 
     proc.on('close', (code) => {
       const resultsFile = path.join(outDir, 'results.json');
@@ -516,8 +546,8 @@ function runPyScraper(url, maxImages) {
       }
       if (code !== 0) {
         console.error(`  ⚠️  Scraper exited ${code} for ${url}\n${stderr.slice(-800)}`);
+        if (logCb) logCb(`Scraper exited with code ${code} — check IG/FB credentials in .env`);
       }
-      // Attach outDir so caller can clean up
       resolve({ records, outDir });
     });
   });
@@ -528,17 +558,19 @@ function runPyScraper(url, maxImages) {
  * Skips if the SME already has ≥5 stored images.
  * Returns the base64 data URIs of all stored images.
  */
-async function scrapeAndStoreImages(sme, maxImages = 15) {
+async function scrapeAndStoreImages(sme, maxImages = 15, logCb = null) {
+  const _log = (msg) => { console.log(`  📷 ${msg}`); if (logCb) logCb(msg); };
+
   // Return cached images if we already have enough
   const existing = await getStoredImages(sme.id);
   if (existing.length >= 5) {
-    console.log(`  📷 Using ${existing.length} cached images for "${sme.name}"`);
+    _log(`Using ${existing.length} cached images for "${sme.name}"`);
     return existing;
   }
 
   const urls = [sme.socialMedia?.instagram, sme.socialMedia?.facebook].filter(Boolean);
   if (!urls.length) {
-    console.log(`  ⚠️  No social media URLs for "${sme.name}" — skipping image scrape`);
+    _log(`No social media URLs for "${sme.name}" — skipping Python scrape`);
     return [];
   }
 
@@ -548,8 +580,8 @@ async function scrapeAndStoreImages(sme, maxImages = 15) {
     const remaining = maxImages - allDataUris.length;
     if (remaining <= 0) break;
 
-    console.log(`  🕷️  Scraping images from ${url} (max ${remaining})…`);
-    const { records, outDir } = await runPyScraper(url, remaining);
+    _log(`Scraping images from ${url} (max ${remaining})…`);
+    const { records, outDir } = await runPyScraper(url, remaining, logCb);
 
     for (const rec of records) {
       try {
@@ -561,15 +593,14 @@ async function scrapeAndStoreImages(sme, maxImages = 15) {
           [sme.id, dataUri, rec.platform || null, rec.source_url || null, rec.caption || null]
         );
         allDataUris.push(dataUri);
+        _log(`Stored image [${allDataUris.length}/${maxImages}] from ${rec.platform || 'social'}`);
       } catch (e) {
-        console.error(`  ⚠️  Failed to store image ${rec.path}: ${e.message}`);
+        _log(`Failed to store image: ${e.message}`);
       }
     }
 
-    // Clean up temp directory
     try { rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
-
-    console.log(`  ✅ ${records.length} images scraped and stored from ${url}`);
+    _log(`${records.length} images scraped and stored from ${url}`);
   }
 
   return allDataUris;
@@ -994,86 +1025,140 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
   if (!rows[0]) return res.status(404).json({ error: 'SME not found' });
   const sme = normalizeSme(rows[0]);
 
-  try {
-    const ct = newCost();
-    console.log(`🌐 Building website for "${sme.name}"…`);
+  // Respond immediately so the frontend can start listening to SSE
+  res.json({ ok: true, status: 'building' });
 
-    // Step 1: Scrape social media text content (tagline, products, brand colors, etc.)
-    const content = await scrapeSocialContent(sme, ct);
-    console.log(`  ✅ Social content scraped for "${sme.name}"`);
+  const L = (msg, type = 'info') => smeLog(sme.id, msg, type);
 
-    // Step 2: Use pre-scraped images from DB (set by /scrape-images endpoint or previous build)
-    let images = await getStoredImages(sme.id);
-    console.log(`  📷 ${images.length} stored images found for "${sme.name}"`);
+  // Run the build pipeline asynchronously
+  (async () => {
+    try {
+      const ct = newCost();
+      L(`━━━ Building website for "${sme.name}" ━━━`, 'phase');
 
-    // Step 2b: If <3 stored images, try Python scraper now (the "scrape → save → fetch" flow)
-    if (images.length < 3) {
-      const socialUrls = [sme.socialMedia?.instagram, sme.socialMedia?.facebook].filter(Boolean);
-      if (socialUrls.length) {
-        console.log(`  🕷️  Auto-scraping social media images for "${sme.name}"…`);
-        const scraped = await scrapeAndStoreImages(sme, 10);
-        if (scraped.length > 0) {
-          images = scraped;
-          console.log(`  ✅ ${scraped.length} real images scraped and stored`);
+      // ── Phase 1: Scrape social content ────────────────────────────────────
+      L(`PHASE 1 — Scraping social media content…`, 'phase');
+      const content = await scrapeSocialContent(sme, ct);
+      L(`Social content extracted (tagline, products, brand colors)`, 'ok');
+
+      // ── Phase 2: Gather images ─────────────────────────────────────────────
+      L(`PHASE 2 — Gathering images for "${sme.name}"…`, 'phase');
+
+      // 2a: Check DB for already-stored images
+      let images = await getStoredImages(sme.id);
+      if (images.length > 0) {
+        L(`Found ${images.length} cached images in DB`, 'ok');
+      } else {
+        L(`No cached images in DB yet`, 'info');
+      }
+
+      // 2b: Python scraper (requires IG_SESSION or IG_USERNAME+IG_PASSWORD in .env)
+      if (images.length < 3) {
+        const socialUrls = [sme.socialMedia?.instagram, sme.socialMedia?.facebook].filter(Boolean);
+        if (socialUrls.length) {
+          L(`Attempting Python scraper for ${socialUrls.length} social URL(s)…`, 'info');
+          const scraped = await scrapeAndStoreImages(sme, 12, (msg) => L(`  [scraper] ${msg}`, 'info'));
+          if (scraped.length > 0) {
+            images = scraped;
+            L(`${scraped.length} real photos scraped and stored in DB`, 'ok');
+          } else {
+            L(`Python scraper returned 0 images (credentials may be missing — set IG_SESSION in .env)`, 'warn');
+          }
+        } else {
+          L(`No Instagram/Facebook URLs on this SME — skipping Python scraper`, 'warn');
         }
       }
-    }
 
-    // Step 2c: If still <3, try real CDN image URLs discovered via web search
-    if (images.length < 3 && content?.realImages?.length) {
-      console.log(`  🌐 Trying ${content.realImages.length} real image URLs from web search…`);
-      const webImages = await downloadImages(content.realImages, 6);
-      if (webImages.length > 0) {
-        // Persist them so future rebuilds are faster
-        for (const dataUri of webImages) {
-          try {
-            await pool.query(
-              `INSERT INTO sme_images (sme_id, data, platform, source_url, caption) VALUES ($1,$2,'web',null,null)`,
-              [sme.id, dataUri]
-            );
-          } catch (_) {}
+      // 2c: AI web-search image URL discovery (scrapeImages function)
+      if (images.length < 3) {
+        L(`Running AI web-search to discover image URLs…`, 'info');
+        const imageUrls = await scrapeImages(sme, ct);
+        L(`Web search found ${imageUrls.length} candidate image URL(s)`, imageUrls.length > 0 ? 'ok' : 'warn');
+        if (imageUrls.length > 0) {
+          L(`Downloading up to 8 images from discovered URLs…`, 'info');
+          const downloaded = await downloadImages(imageUrls, 8);
+          if (downloaded.length > 0) {
+            for (const dataUri of downloaded) {
+              try {
+                await pool.query(
+                  `INSERT INTO sme_images (sme_id, data, platform, source_url, caption) VALUES ($1,$2,'web-search',null,null)`,
+                  [sme.id, dataUri]
+                );
+              } catch (_) {}
+            }
+            images = [...images, ...downloaded];
+            L(`${downloaded.length} images downloaded and stored in DB`, 'ok');
+          } else {
+            L(`Could not download images from discovered URLs (CDN restrictions)`, 'warn');
+          }
         }
-        images = [...images, ...webImages];
-        console.log(`  ✅ ${webImages.length} images downloaded from search results`);
       }
+
+      // 2d: realImages extracted from scrapeSocialContent
+      if (images.length < 3 && content?.realImages?.length) {
+        L(`Trying ${content.realImages.length} image URL(s) from social content scrape…`, 'info');
+        const webImages = await downloadImages(content.realImages, 6);
+        if (webImages.length > 0) {
+          for (const dataUri of webImages) {
+            try {
+              await pool.query(
+                `INSERT INTO sme_images (sme_id, data, platform, source_url, caption) VALUES ($1,$2,'social-content',null,null)`,
+                [sme.id, dataUri]
+              );
+            } catch (_) {}
+          }
+          images = [...images, ...webImages];
+          L(`${webImages.length} images stored from social content results`, 'ok');
+        }
+      }
+
+      // 2e: Stock photo fallback
+      if (images.length < 3) {
+        const needed = 6 - images.length;
+        L(`Using stock photos as visual fallback (${images.length} real images found)`, 'warn');
+        const stockImages = await downloadImages(getStockImageUrls(sme, needed + 2));
+        images = [...images, ...stockImages].slice(0, 8);
+        L(`Supplemented with ${stockImages.length} stock photos — total: ${images.length} images`, 'ok');
+      }
+
+      L(`Total images for website: ${images.length}`, 'ok');
+
+      // ── Phase 3: Build HTML with Claude ────────────────────────────────────
+      L(`PHASE 3 — Building website HTML with Claude AI (${images.length} images)…`, 'phase');
+      let html = await buildWebsiteHtml(sme, content, images, ct);
+      L(`HTML generated — ${Math.round(html.length / 1024)}kb`, 'ok');
+
+      // Validate HTML completeness
+      if (!html || html.length < 500) {
+        throw new Error('Website generation produced empty or too-short HTML');
+      }
+      if (!html.includes('</body>') && !html.includes('</html>')) {
+        L(`HTML appears truncated — rebuilding…`, 'warn');
+        html = await buildWebsiteHtml(sme, content, images, ct);
+        if (!html || html.length < 500) throw new Error('Rebuild also produced invalid HTML');
+        L(`Rebuild successful — ${Math.round(html.length / 1024)}kb`, 'ok');
+      }
+
+      // ── Save to DB ─────────────────────────────────────────────────────────
+      await pool.query(
+        `INSERT INTO websites (sme_id, html, social_content) VALUES ($1,$2,$3)
+         ON CONFLICT (sme_id) DO UPDATE SET html=$2, social_content=$3, built_at=NOW()`,
+        [sme.id, html, JSON.stringify(content || {})]
+      );
+      await pool.query(`UPDATE smes SET status='website_built' WHERE id=$1`, [sme.id]);
+
+      const cost = costSummary(ct);
+      L(`💰 Cost: ${cost.display}  (${cost.inputTokens.toLocaleString()} in / ${cost.outputTokens.toLocaleString()} out, ${cost.searches} searches)`, 'ok');
+      L(`━━━ Website ready! ━━━`, 'phase');
+
+      smeSse(sme.id, 'done', { imagesUsed: images.length, contentScraped: !!content, cost });
+
+    } catch (e) {
+      console.error('Website builder error:', e);
+      L(`Error: ${e.message}`, 'warn');
+      smeSse(sme.id, 'error', { message: e.message });
     }
-
-    // Step 2d: Fall back to stock photos if still not enough real images
-    if (images.length < 3) {
-      const needed = 6 - images.length;
-      const stockImages = await downloadImages(getStockImageUrls(sme, needed + 2));
-      images = [...images, ...stockImages].slice(0, 8);
-      console.log(`  🖼️  Supplemented with ${stockImages.length} stock photos (total: ${images.length})`);
-    }
-
-    // Step 3: Build fully unique, industry-tailored HTML with Claude
-    let html = await buildWebsiteHtml(sme, content, images, ct);
-    console.log(`  ✅ HTML built (${Math.round(html.length / 1024)}kb)`);
-
-    // Validate HTML is not truncated — a cut-off <style> block renders as blank page
-    if (!html || html.length < 500) {
-      throw new Error('Website generation produced empty or too-short HTML');
-    }
-    if (!html.includes('</body>') && !html.includes('</html>')) {
-      console.warn('  ⚠️  HTML appears truncated (no closing tags) — attempting rebuild…');
-      html = await buildWebsiteHtml(sme, content, images, ct);
-      if (!html || html.length < 500) throw new Error('Rebuild also failed to produce valid HTML');
-    }
-
-    const cost = costSummary(ct);
-    console.log(`  💰 Website build cost: ${cost.display} (${cost.inputTokens.toLocaleString()} in / ${cost.outputTokens.toLocaleString()} out tokens, ${cost.searches} searches)`);
-
-    await pool.query(
-      `INSERT INTO websites (sme_id, html, social_content) VALUES ($1,$2,$3)
-       ON CONFLICT (sme_id) DO UPDATE SET html=$2, social_content=$3, built_at=NOW()`,
-      [sme.id, html, JSON.stringify(content || {})]
-    );
-    await pool.query(`UPDATE smes SET status='website_built' WHERE id=$1`, [sme.id]);
-    res.json({ ok: true, imagesUsed: images.length, contentScraped: !!content, cost });
-  } catch (e) {
-    console.error('Website builder error:', e);
-    res.status(500).json({ error: e.message });
-  }
+  })();
 });
 
 // ── Scrape & store social media images for an SME ────────────────────────────
@@ -1085,17 +1170,70 @@ app.post('/api/smes/:id/scrape-images', async (req, res) => {
   // Allow force re-scrape via ?force=true
   if (req.query.force === 'true') {
     await pool.query('DELETE FROM sme_images WHERE sme_id=$1', [sme.id]);
-    console.log(`  🗑️  Cleared existing images for "${sme.name}"`);
+    smeLog(sme.id, `Cleared existing images for "${sme.name}"`, 'info');
   }
 
-  try {
-    console.log(`📸 Scraping images for "${sme.name}"…`);
-    const images = await scrapeAndStoreImages(sme, req.body?.max || 15);
-    res.json({ ok: true, count: images.length });
-  } catch (e) {
-    console.error('Image scrape error:', e);
-    res.status(500).json({ error: e.message });
-  }
+  // Respond immediately so SSE can stream progress
+  res.json({ ok: true, status: 'scraping' });
+
+  const L = (msg, type = 'info') => smeLog(sme.id, msg, type);
+
+  (async () => {
+    try {
+      L(`━━━ Scraping photos for "${sme.name}" ━━━`, 'phase');
+
+      const socialUrls = [sme.socialMedia?.instagram, sme.socialMedia?.facebook].filter(Boolean);
+      if (!socialUrls.length) {
+        L(`No Instagram/Facebook URLs — cannot scrape photos`, 'warn');
+        smeSse(sme.id, 'scrape-done', { count: 0, error: 'No social media URLs found' });
+        return;
+      }
+
+      L(`PHASE 1 — Python scraper (requires IG_SESSION or IG_USERNAME/IG_PASSWORD in .env)`, 'phase');
+      const images = await scrapeAndStoreImages(sme, req.body?.max || 15, (msg) => L(msg, 'info'));
+
+      if (images.length > 0) {
+        L(`${images.length} photos scraped and stored in DB`, 'ok');
+      } else {
+        L(`Python scraper returned 0 images — trying AI web-search fallback…`, 'warn');
+
+        // Fallback: AI web-search image discovery
+        L(`PHASE 2 — AI web-search image discovery…`, 'phase');
+        const ct = newCost();
+        const imageUrls = await scrapeImages(sme, ct);
+        L(`Web search found ${imageUrls.length} candidate image URL(s)`, imageUrls.length > 0 ? 'ok' : 'warn');
+
+        let stored = 0;
+        if (imageUrls.length > 0) {
+          const downloaded = await downloadImages(imageUrls, 12);
+          for (const dataUri of downloaded) {
+            try {
+              await pool.query(
+                `INSERT INTO sme_images (sme_id, data, platform, source_url, caption) VALUES ($1,$2,'web-search',null,null)`,
+                [sme.id, dataUri]
+              );
+              stored++;
+            } catch (_) {}
+          }
+          if (stored > 0) L(`${stored} images downloaded and stored via web search`, 'ok');
+        }
+
+        if (stored === 0) {
+          L(`No images could be retrieved. To enable Python scraper, set IG_SESSION in .env`, 'warn');
+        }
+
+        const finalImages = await getStoredImages(sme.id);
+        smeSse(sme.id, 'scrape-done', { count: finalImages.length });
+        return;
+      }
+
+      smeSse(sme.id, 'scrape-done', { count: images.length });
+    } catch (e) {
+      console.error('Image scrape error:', e);
+      L(`Error: ${e.message}`, 'warn');
+      smeSse(sme.id, 'scrape-done', { count: 0, error: e.message });
+    }
+  })();
 });
 
 app.get('/api/smes/:id/website', async (req, res) => {

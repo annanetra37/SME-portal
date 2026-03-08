@@ -873,6 +873,56 @@
     }
 
     .pulsing { animation: pulse 1.5s ease-in-out infinite; }
+
+    /* ── Build terminal (website builder + scrape progress) ──────────────── */
+    .build-terminal {
+      background: #07070d;
+      border: 1px solid #1a1a2e;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 16px;
+      font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px;
+    }
+    .build-terminal-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 14px; background: #0f0f1a; border-bottom: 1px solid #1a1a2e;
+    }
+    .bt-dot { width: 11px; height: 11px; border-radius: 50%; }
+    .bt-dot.r { background: #ff5f57; }
+    .bt-dot.y { background: #febc2e; }
+    .bt-dot.g { background: #28c840; }
+    .bt-title { color: #555; font-size: 11px; flex: 1; margin-left: 4px; }
+    .bt-badge {
+      font-size: 10px; padding: 2px 8px; border-radius: 10px;
+      font-weight: 600; letter-spacing: 0.4px;
+    }
+    .bt-badge.running { background: #6c63ff22; color: #6c63ff; animation: pulse 2s infinite; }
+    .bt-badge.done    { background: #43e97b22; color: #43e97b; }
+    .bt-badge.error   { background: #ff4d6d22; color: #ff4d6d; }
+    .build-terminal-body {
+      padding: 10px 14px; max-height: 280px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .build-terminal-body::-webkit-scrollbar { width: 3px; }
+    .build-terminal-body::-webkit-scrollbar-thumb { background: #1a1a2e; border-radius: 3px; }
+    .bt-line { color: #8888aa; line-height: 1.55; }
+    .bt-line.phase { color: #a080ff; font-weight: 700; margin-top: 4px; }
+    .bt-line.ok    { color: #43e97b; }
+    .bt-line.warn  { color: #ffd166; }
+    .bt-line.error { color: #ff4d6d; }
+    .bt-cursor {
+      display: inline-block; width: 7px; height: 13px;
+      background: #6c63ff; border-radius: 1px;
+      animation: pulse 1s infinite; vertical-align: middle;
+    }
+    .btn-scrape {
+      background: #1a1a2e; border: 1px solid #2a2a4a; color: #a080ff;
+      padding: 5px 12px; border-radius: 8px; font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all 0.18s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-scrape:hover { background: #22224a; border-color: #6c63ff; color: #c0a0ff; }
+    .btn-scrape:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -1445,11 +1495,17 @@ function renderDetailActions(sme) {
   const hasWebsite = !!state.websites[sme.id];
   const hasEmail = !!state.emails[sme.id];
   const site = state.websites[sme.id];
+  const hasSocial = !!(sme.socialMedia?.instagram || sme.socialMedia?.facebook);
 
   document.getElementById('detailActions').innerHTML = `
     <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')" id="buildBtn-${sme.id}">
       ${hasWebsite ? '🔄 Rebuild' : '🔨 Build Website'}
     </button>
+    ${hasSocial ? `
+      <button class="btn-scrape" onclick="scrapePhotos('${sme.id}')" id="scrapeBtn-${sme.id}" title="Scrape photos from Instagram/Facebook and store in DB">
+        📸 Scrape Photos
+      </button>
+    ` : ''}
     ${hasWebsite ? `
       <button class="btn btn-secondary btn-sm" onclick="deploySite('${sme.id}')" id="deployBtn-${sme.id}">
         ${site?.deployedUrl ? '✅ Deployed' : '🚀 Deploy'}
@@ -1566,12 +1622,16 @@ function renderWebsiteTab(sme) {
   const el = document.getElementById('tab-website');
 
   if (!site) {
+    const hasSocial = !!(sme.socialMedia?.instagram || sme.socialMedia?.facebook);
     el.innerHTML = `
       <div class="empty-state">
         <div class="empty-icon">🔨</div>
         <div class="empty-title">No website built yet</div>
         <div class="empty-sub">Click "Build Website" to run the Website Builder Agent.</div>
-        <button class="btn btn-primary" onclick="buildWebsite('${sme.id}')">🔨 Build Website</button>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="buildWebsite('${sme.id}')">🔨 Build Website</button>
+          ${hasSocial ? `<button class="btn-scrape" onclick="scrapePhotos('${sme.id}')" id="scrapeBtn-${sme.id}">📸 Scrape Photos First</button>` : ''}
+        </div>
       </div>
     `;
     return;
@@ -1654,35 +1714,197 @@ function switchTab(tab, el) {
   document.getElementById('tab-' + tab).classList.add('active');
 }
 
+// ─── Build Terminal helpers ────────────────────────────────────────────────────
+function showBuildTerminal(smeId, title, tabId = 'tab-website') {
+  const el = document.getElementById(tabId);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="build-terminal" id="bt-${smeId}">
+      <div class="build-terminal-bar">
+        <div class="bt-dot r"></div><div class="bt-dot y"></div><div class="bt-dot g"></div>
+        <span class="bt-title">${title}</span>
+        <span class="bt-badge running" id="bt-badge-${smeId}">● running</span>
+      </div>
+      <div class="build-terminal-body" id="bt-body-${smeId}">
+        <span class="bt-cursor"></span>
+      </div>
+    </div>
+  `;
+}
+
+function buildTermLog(smeId, msg, type = 'info') {
+  const body = document.getElementById(`bt-body-${smeId}`);
+  if (!body) return;
+  // Remove cursor if present
+  const cursor = body.querySelector('.bt-cursor');
+  if (cursor) cursor.remove();
+  const line = document.createElement('div');
+  line.className = `bt-line ${type}`;
+  line.textContent = msg;
+  body.appendChild(line);
+  // Re-add cursor
+  const cur = document.createElement('span');
+  cur.className = 'bt-cursor';
+  body.appendChild(cur);
+  body.scrollTop = body.scrollHeight;
+}
+
+function finalizeBuildTerminal(smeId, success = true) {
+  const badge = document.getElementById(`bt-badge-${smeId}`);
+  if (badge) {
+    badge.className = `bt-badge ${success ? 'done' : 'error'}`;
+    badge.textContent = success ? '● done' : '● error';
+  }
+  const body = document.getElementById(`bt-body-${smeId}`);
+  if (body) {
+    const cursor = body.querySelector('.bt-cursor');
+    if (cursor) cursor.remove();
+  }
+}
+
 // ─── Agents ───────────────────────────────────────────
 async function buildWebsite(smeId) {
   const btn = document.getElementById(`buildBtn-${smeId}`);
   if (btn) { btn.disabled = true; btn.innerHTML = `<div class="spinner"></div> Building...`; }
-  toast('Website Builder Agent running...', 'info');
 
-  try {
-    const buildResult = await api('POST', `/smes/${smeId}/build-website`);
-    if (buildResult?.cost) addCost(buildResult.cost);
-    const site = await api('GET', `/smes/${smeId}/website`);
-    state.websites[smeId] = { ...site, buildCost: buildResult?.cost || null };
+  const sme = state.currentSme;
+  const smeName = sme?.name || 'SME';
 
-    // Update local sme status
-    for (const list of Object.values(state.smes)) {
-      const idx = list.findIndex(s => s.id === smeId);
-      if (idx !== -1) { list[idx].status = 'website_built'; break; }
+  // Switch to website tab and show terminal
+  const websiteTab = document.querySelector('.detail-tab[onclick*="website"]');
+  if (websiteTab) websiteTab.click();
+  showBuildTerminal(smeId, `website-builder — ${smeName}`, 'tab-website');
+  buildTermLog(smeId, `Starting Website Builder Agent for "${smeName}"…`, 'phase');
+
+  let buildDone = false;
+  let buildCost = null;
+
+  // Open SSE stream FIRST, then trigger POST on open
+  const es = new EventSource(`${API}/smes/${smeId}/build-stream`);
+
+  es.onopen = async () => {
+    try {
+      await api('POST', `/smes/${smeId}/build-website`);
+    } catch (e) {
+      es.close();
+      buildTermLog(smeId, `Failed to start build: ${e.message}`, 'error');
+      finalizeBuildTerminal(smeId, false);
+      toast('Build failed to start', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
+    }
+  };
+
+  es.addEventListener('log', e => {
+    const { msg, type } = JSON.parse(e.data);
+    buildTermLog(smeId, msg, type);
+  });
+
+  es.addEventListener('done', async e => {
+    es.close();
+    buildDone = true;
+    const data = JSON.parse(e.data);
+    buildCost = data.cost || null;
+    if (buildCost) addCost(buildCost);
+
+    finalizeBuildTerminal(smeId, true);
+    buildTermLog(smeId, `Website ready — fetching preview…`, 'ok');
+
+    try {
+      const site = await api('GET', `/smes/${smeId}/website`);
+      state.websites[smeId] = { ...site, buildCost };
+
+      for (const list of Object.values(state.smes)) {
+        const idx = list.findIndex(s => s.id === smeId);
+        if (idx !== -1) { list[idx].status = 'website_built'; break; }
+      }
+
+      const costMsg = buildCost ? ` · AI cost: ${buildCost.display}` : '';
+      toast(`✨ Website built! ${data.imagesUsed} images used${costMsg}`, 'success');
+
+      if (state.currentSme?.id === smeId) {
+        renderDetailActions(state.currentSme);
+        renderWebsiteTab(state.currentSme);
+      }
+      if (state.currentCountry) renderSMEGrid(state.currentCountry.id);
+      updateStats();
+    } catch (err) {
+      buildTermLog(smeId, `Fetch error: ${err.message}`, 'warn');
     }
 
-    const costMsg = buildResult?.cost ? ` · AI cost: ${buildResult.cost.display}` : '';
-    toast(`✨ Website built successfully!${costMsg}`, 'success');
-    if (state.currentSme?.id === smeId) {
-      renderDetailActions(state.currentSme);
-      renderWebsiteTab(state.currentSme);
-    }
-    if (state.currentCountry) renderSMEGrid(state.currentCountry.id);
-    updateStats();
-  } catch {} finally {
     if (btn) { btn.disabled = false; btn.innerHTML = '🔄 Rebuild'; }
-  }
+  });
+
+  es.addEventListener('error', e => {
+    if (buildDone) return; // normal close after done event
+    es.close();
+    let msg = 'Build error';
+    try { msg = JSON.parse(e.data)?.message || msg; } catch (_) {}
+    buildTermLog(smeId, `Error: ${msg}`, 'error');
+    finalizeBuildTerminal(smeId, false);
+    toast(`Build failed: ${msg}`, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
+  });
+}
+
+// ─── Manual Photo Scraper ──────────────────────────────────────────────────────
+async function scrapePhotos(smeId) {
+  const btn = document.getElementById(`scrapeBtn-${smeId}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = `<div class="spinner"></div> Scraping…`; }
+
+  const sme = state.currentSme;
+  const smeName = sme?.name || 'SME';
+
+  // Switch to website tab and show terminal
+  const websiteTab = document.querySelector('.detail-tab[onclick*="website"]');
+  if (websiteTab) websiteTab.click();
+  showBuildTerminal(smeId, `photo-scraper — ${smeName}`, 'tab-website');
+  buildTermLog(smeId, `Starting photo scraper for "${smeName}"…`, 'phase');
+
+  let scrapeDone = false;
+
+  const es = new EventSource(`${API}/smes/${smeId}/build-stream`);
+
+  es.onopen = async () => {
+    try {
+      // force=true clears existing images and re-scrapes
+      await api('POST', `/smes/${smeId}/scrape-images?force=true`, {});
+    } catch (e) {
+      es.close();
+      buildTermLog(smeId, `Failed to start scrape: ${e.message}`, 'error');
+      finalizeBuildTerminal(smeId, false);
+      toast('Scrape failed to start', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; }
+    }
+  };
+
+  es.addEventListener('log', e => {
+    const { msg, type } = JSON.parse(e.data);
+    buildTermLog(smeId, msg, type);
+  });
+
+  es.addEventListener('scrape-done', e => {
+    es.close();
+    scrapeDone = true;
+    const data = JSON.parse(e.data);
+    finalizeBuildTerminal(smeId, !data.error);
+    if (data.count > 0) {
+      toast(`📸 ${data.count} photos scraped and stored in DB!`, 'success');
+      buildTermLog(smeId, `Done — ${data.count} photos stored in DB`, 'ok');
+    } else {
+      const errMsg = data.error || 'No photos retrieved';
+      toast(`📸 Scrape complete — ${errMsg}`, 'warn');
+      buildTermLog(smeId, `Complete — ${errMsg}`, 'warn');
+    }
+    if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; }
+  });
+
+  es.addEventListener('error', e => {
+    if (scrapeDone) return;
+    es.close();
+    buildTermLog(smeId, 'Connection error — scrape may still be running in background', 'warn');
+    finalizeBuildTerminal(smeId, false);
+    if (btn) { btn.disabled = false; btn.innerHTML = '📸 Scrape Photos'; }
+  });
 }
 
 async function deploySite(smeId) {
