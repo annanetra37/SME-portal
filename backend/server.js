@@ -5,6 +5,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import pool from './db/pool.js';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { spawn } from 'child_process';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
 
 dotenv.config();
 
@@ -57,9 +60,17 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ DEFAULT NOW(),
       CONSTRAINT emails_sme_id_key UNIQUE (sme_id)
     );
-    CREATE INDEX IF NOT EXISTS idx_smes_country ON smes(country_id);
-    CREATE INDEX IF NOT EXISTS idx_websites_sme ON websites(sme_id);
-    CREATE INDEX IF NOT EXISTS idx_emails_sme   ON emails(sme_id);
+    CREATE TABLE IF NOT EXISTS sme_images (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      sme_id UUID NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
+      data TEXT NOT NULL,
+      platform TEXT, source_url TEXT, caption TEXT,
+      scraped_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_smes_country  ON smes(country_id);
+    CREATE INDEX IF NOT EXISTS idx_websites_sme  ON websites(sme_id);
+    CREATE INDEX IF NOT EXISTS idx_emails_sme    ON emails(sme_id);
+    CREATE INDEX IF NOT EXISTS idx_sme_images_sme ON sme_images(sme_id);
   `);
   // Safe column additions
   for (const sql of [
@@ -416,6 +427,106 @@ Return JSON array: [{"name":str,"industry":str,"productType":str,"description":s
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOCIAL MEDIA IMAGE SCRAPER — Python subprocess integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Return stored images (base64 data URIs) for an SME from the DB. */
+async function getStoredImages(smeId) {
+  const { rows } = await pool.query(
+    'SELECT data FROM sme_images WHERE sme_id=$1 ORDER BY scraped_at ASC',
+    [smeId]
+  );
+  return rows.map(r => r.data);
+}
+
+/**
+ * Run the Python scraper for a single social media URL.
+ * Returns an array of { path, platform, source_url, caption } objects.
+ */
+function runPyScraper(url, maxImages) {
+  return new Promise((resolve) => {
+    const outDir = mkdtempSync(path.join(tmpdir(), 'sme-scraper-'));
+    const scraperPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'scraper.py');
+
+    const proc = spawn('python3', [scraperPath, url, '--output', outDir, '--max', String(maxImages)], {
+      env: process.env,
+    });
+
+    let stderr = '';
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      const resultsFile = path.join(outDir, 'results.json');
+      let records = [];
+      if (existsSync(resultsFile)) {
+        try {
+          const parsed = JSON.parse(readFileSync(resultsFile, 'utf8'));
+          records = parsed.images || [];
+        } catch (_) {}
+      }
+      if (code !== 0) {
+        console.error(`  ⚠️  Scraper exited ${code} for ${url}\n${stderr.slice(-800)}`);
+      }
+      // Attach outDir so caller can clean up
+      resolve({ records, outDir });
+    });
+  });
+}
+
+/**
+ * Scrape images for an SME from its social media pages and store in DB.
+ * Skips if the SME already has ≥5 stored images.
+ * Returns the base64 data URIs of all stored images.
+ */
+async function scrapeAndStoreImages(sme, maxImages = 15) {
+  // Return cached images if we already have enough
+  const existing = await getStoredImages(sme.id);
+  if (existing.length >= 5) {
+    console.log(`  📷 Using ${existing.length} cached images for "${sme.name}"`);
+    return existing;
+  }
+
+  const urls = [sme.socialMedia?.instagram, sme.socialMedia?.facebook].filter(Boolean);
+  if (!urls.length) {
+    console.log(`  ⚠️  No social media URLs for "${sme.name}" — skipping image scrape`);
+    return [];
+  }
+
+  const allDataUris = [];
+
+  for (const url of urls) {
+    const remaining = maxImages - allDataUris.length;
+    if (remaining <= 0) break;
+
+    console.log(`  🕷️  Scraping images from ${url} (max ${remaining})…`);
+    const { records, outDir } = await runPyScraper(url, remaining);
+
+    for (const rec of records) {
+      try {
+        const buf = readFileSync(rec.path);
+        const dataUri = `data:image/jpeg;base64,${buf.toString('base64')}`;
+        await pool.query(
+          `INSERT INTO sme_images (sme_id, data, platform, source_url, caption)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [sme.id, dataUri, rec.platform || null, rec.source_url || null, rec.caption || null]
+        );
+        allDataUris.push(dataUri);
+      } catch (e) {
+        console.error(`  ⚠️  Failed to store image ${rec.path}: ${e.message}`);
+      }
+    }
+
+    // Clean up temp directory
+    try { rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
+
+    console.log(`  ✅ ${records.length} images scraped and stored from ${url}`);
+  }
+
+  return allDataUris;
+}
+
 // WEBSITE BUILDER — scrapes social media content first, then builds rich site
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -833,27 +944,25 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
   const sme = normalizeSme(rows[0]);
 
   try {
-    console.log(`🌐 Building website for "${sme.name}" — scraping social content first...`);
+    console.log(`🌐 Building website for "${sme.name}"…`);
 
-    // Step 1: Scrape social media content + extract image URLs
+    // Step 1: Scrape social media text content (tagline, products, brand colors, etc.)
     const content = await scrapeSocialContent(sme);
     console.log(`  ✅ Social content scraped for "${sme.name}"`);
 
-    // Step 2: Collect image URLs (from content extraction + dedicated image search) then download
-    const rawImageUrls = [...new Set([
-      ...(content?.realImages || []).filter(u => typeof u === 'string' && u.startsWith('https://')),
-      ...await scrapeImages(sme),
-    ])];
-    const realImages = await downloadImages(rawImageUrls);
-    console.log(`  📷 ${realImages.length}/${rawImageUrls.length} real images downloaded for "${sme.name}"`);
+    // Step 2: Use pre-scraped images from DB (set by /scrape-images endpoint or previous build)
+    let images = await getStoredImages(sme.id);
+    console.log(`  📷 ${images.length} stored images found for "${sme.name}"`);
 
-    // Step 2b: Supplement with topic-matched stock photos when real images are scarce
-    const needed = Math.max(0, 6 - realImages.length);
-    const stockImages = needed > 0 ? await downloadImages(getStockImageUrls(sme, needed + 2)) : [];
-    const images = [...realImages, ...stockImages].slice(0, 8);
-    console.log(`  🖼️  ${images.length} total images (${realImages.length} real + ${stockImages.length} stock) for "${sme.name}"`);
+    // Step 2b: Fall back to stock photos if no real images are stored yet
+    if (images.length < 3) {
+      const needed = 6 - images.length;
+      const stockImages = await downloadImages(getStockImageUrls(sme, needed + 2));
+      images = [...images, ...stockImages].slice(0, 8);
+      console.log(`  🖼️  Supplemented with ${stockImages.length} stock photos (total: ${images.length})`);
+    }
 
-    // Step 3: Build full HTML with scraped content + real images
+    // Step 3: Build fully unique, industry-tailored HTML with Claude
     const html = await buildWebsiteHtml(sme, content, images);
     console.log(`  ✅ HTML built (${Math.round(html.length / 1024)}kb)`);
 
@@ -863,9 +972,31 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
       [sme.id, html, JSON.stringify(content || {})]
     );
     await pool.query(`UPDATE smes SET status='website_built' WHERE id=$1`, [sme.id]);
-    res.json({ ok: true, contentScraped: !!content });
+    res.json({ ok: true, imagesUsed: images.length, contentScraped: !!content });
   } catch (e) {
     console.error('Website builder error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Scrape & store social media images for an SME ────────────────────────────
+app.post('/api/smes/:id/scrape-images', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM smes WHERE id=$1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'SME not found' });
+  const sme = normalizeSme(rows[0]);
+
+  // Allow force re-scrape via ?force=true
+  if (req.query.force === 'true') {
+    await pool.query('DELETE FROM sme_images WHERE sme_id=$1', [sme.id]);
+    console.log(`  🗑️  Cleared existing images for "${sme.name}"`);
+  }
+
+  try {
+    console.log(`📸 Scraping images for "${sme.name}"…`);
+    const images = await scrapeAndStoreImages(sme, req.body?.max || 15);
+    res.json({ ok: true, count: images.length });
+  } catch (e) {
+    console.error('Image scrape error:', e);
     res.status(500).json({ error: e.message });
   }
 });
