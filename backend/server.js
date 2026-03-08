@@ -71,6 +71,24 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_websites_sme  ON websites(sme_id);
     CREATE INDEX IF NOT EXISTS idx_emails_sme    ON emails(sme_id);
     CREATE INDEX IF NOT EXISTS idx_sme_images_sme ON sme_images(sme_id);
+    CREATE TABLE IF NOT EXISTS ai_costs (
+      id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      sme_id        TEXT,
+      sme_name      TEXT,
+      country_id    TEXT,
+      country_name  TEXT,
+      activity      TEXT NOT NULL,
+      input_tokens  INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      haiku_input   INTEGER DEFAULT 0,
+      haiku_output  INTEGER DEFAULT 0,
+      web_searches  INTEGER DEFAULT 0,
+      total_cost    DECIMAL(12,8) DEFAULT 0,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_costs_sme      ON ai_costs(sme_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_costs_activity ON ai_costs(activity);
+    CREATE INDEX IF NOT EXISTS idx_ai_costs_created  ON ai_costs(created_at);
   `);
   // Safe column additions / constraint drops
   for (const sql of [
@@ -138,35 +156,43 @@ app.get('/api/smes/:id/build-stream', (req, res) => {
 });
 
 // ─── Cost tracking ────────────────────────────────────────────────────────────
-// Pricing for claude-sonnet-4-6 (per Anthropic pricing page)
 const PRICING = {
-  inputPerMTok:  3.00,   // $3.00 per million input tokens
-  outputPerMTok: 15.00,  // $15.00 per million output tokens
-  searchPer1k:   10.00,  // $10.00 per 1000 web search calls
+  inputPerMTok:        3.00,   // Sonnet 4.6 input  — $3.00 / MTok
+  outputPerMTok:       15.00,  // Sonnet 4.6 output — $15.00 / MTok
+  haikuInputPerMTok:   0.80,   // Haiku 4.5 input   — $0.80 / MTok  (3.75× cheaper)
+  haikuOutputPerMTok:  4.00,   // Haiku 4.5 output  — $4.00 / MTok  (3.75× cheaper)
+  searchPer1k:         10.00,  // Web search        — $10.00 / 1 000 searches
 };
 
 function newCost() {
-  return { inputTokens: 0, outputTokens: 0, searches: 0 };
+  return { inputTokens: 0, outputTokens: 0, haikuInput: 0, haikuOutput: 0, searches: 0 };
 }
 
 function costSummary(ct) {
-  const inCost   = (ct.inputTokens / 1_000_000) * PRICING.inputPerMTok;
-  const outCost  = (ct.outputTokens / 1_000_000) * PRICING.outputPerMTok;
-  const srchCost = (ct.searches    / 1_000)      * PRICING.searchPer1k;
-  const total    = inCost + outCost + srchCost;
+  const inCost   = (ct.inputTokens          / 1e6) * PRICING.inputPerMTok;
+  const outCost  = (ct.outputTokens         / 1e6) * PRICING.outputPerMTok;
+  const hIn      = ((ct.haikuInput  || 0)   / 1e6) * PRICING.haikuInputPerMTok;
+  const hOut     = ((ct.haikuOutput || 0)   / 1e6) * PRICING.haikuOutputPerMTok;
+  const srchCost = (ct.searches              / 1e3) * PRICING.searchPer1k;
+  const total    = inCost + outCost + hIn + hOut + srchCost;
   return {
-    inputTokens:  ct.inputTokens,
-    outputTokens: ct.outputTokens,
-    searches:     ct.searches,
-    inputCost:    +inCost.toFixed(6),
-    outputCost:   +outCost.toFixed(6),
-    searchCost:   +srchCost.toFixed(6),
-    total:        +total.toFixed(6),
-    display:      total < 0.0001 ? `< $0.0001` : `$${total.toFixed(4)}`,
+    inputTokens:     ct.inputTokens,
+    outputTokens:    ct.outputTokens,
+    haikuInput:      ct.haikuInput  || 0,
+    haikuOutput:     ct.haikuOutput || 0,
+    searches:        ct.searches,
+    inputCost:       +inCost.toFixed(6),
+    outputCost:      +outCost.toFixed(6),
+    haikuInputCost:  +hIn.toFixed(6),
+    haikuOutputCost: +hOut.toFixed(6),
+    searchCost:      +srchCost.toFixed(6),
+    total:           +total.toFixed(6),
+    display:         total < 0.0001 ? `< $0.0001` : `$${total.toFixed(4)}`,
   };
 }
 
 // ─── AI helpers ──────────────────────────────────────────────────────────────
+/** Sonnet 4.6 — creative generation (HTML, email, social content) */
 async function claude(system, user, maxTokens = 3000, ct = null) {
   const r = await anthropic.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: maxTokens,
@@ -179,22 +205,36 @@ async function claude(system, user, maxTokens = 3000, ct = null) {
   return r.content[0].text;
 }
 
+/** Haiku 4.5 — structured extraction / parsing (3.75× cheaper than Sonnet) */
+async function claudeHaiku(system, user, maxTokens = 2000, ct = null) {
+  const r = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens,
+    system, messages: [{ role: 'user', content: user }],
+  });
+  if (ct && r.usage) {
+    ct.haikuInput  = (ct.haikuInput  || 0) + (r.usage.input_tokens  || 0);
+    ct.haikuOutput = (ct.haikuOutput || 0) + (r.usage.output_tokens || 0);
+  }
+  return r.content[0].text;
+}
+
+/** Web search via Haiku — cost-optimised (Haiku supports web_search_20250305) */
 async function webSearch(query, ct = null) {
   if (ct) ct.searches += 1;
   const r = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 6000,
+    model: 'claude-haiku-4-5-20251001', max_tokens: 4000,
     tools: [{ type: 'web_search_20250305', name: 'web_search' }],
     messages: [{ role: 'user', content: query }],
   });
   if (ct && r.usage) {
-    ct.inputTokens  += r.usage.input_tokens  || 0;
-    ct.outputTokens += r.usage.output_tokens || 0;
+    ct.haikuInput  = (ct.haikuInput  || 0) + (r.usage.input_tokens  || 0);
+    ct.haikuOutput = (ct.haikuOutput || 0) + (r.usage.output_tokens || 0);
   }
   if (r.stop_reason === 'tool_use') {
     const toolResults = r.content.filter(b => b.type === 'tool_use')
       .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'results retrieved' }));
     const r2 = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6', max_tokens: 6000,
+      model: 'claude-haiku-4-5-20251001', max_tokens: 4000,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages: [
         { role: 'user', content: query },
@@ -203,12 +243,29 @@ async function webSearch(query, ct = null) {
       ],
     });
     if (ct && r2.usage) {
-      ct.inputTokens  += r2.usage.input_tokens  || 0;
-      ct.outputTokens += r2.usage.output_tokens || 0;
+      ct.haikuInput  = (ct.haikuInput  || 0) + (r2.usage.input_tokens  || 0);
+      ct.haikuOutput = (ct.haikuOutput || 0) + (r2.usage.output_tokens || 0);
     }
     return r2.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   }
   return r.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+}
+
+/** Persist a cost summary to the ai_costs table. Returns the costSummary object. */
+async function saveCost(ct, activity, opts = {}) {
+  const { smeId = null, smeName = null, countryId = null, countryName = null } = opts;
+  const s = costSummary(ct);
+  try {
+    await pool.query(
+      `INSERT INTO ai_costs
+         (sme_id, sme_name, country_id, country_name, activity,
+          input_tokens, output_tokens, haiku_input, haiku_output, web_searches, total_cost)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [smeId, smeName, countryId, countryName, activity,
+       s.inputTokens, s.outputTokens, s.haikuInput, s.haikuOutput, s.searches, s.total]
+    );
+  } catch (e) { console.error('saveCost failed:', e.message); }
+  return s;
 }
 
 function normalizeSme(row) {
@@ -283,7 +340,7 @@ async function runSearchPipeline(countryId, countryName) {
     .slice(0, 22000);
 
   log(countryId, 'Extracting candidate businesses from search results...');
-  const extractRaw = await claude(
+  const extractRaw = await claudeHaiku(
     'Return ONLY valid JSON arrays, no markdown.',
     `From these web search results about ${countryName}, extract every distinct small business that appears to operate on Facebook or Instagram WITHOUT its own website.
 
@@ -413,11 +470,11 @@ If nothing, return [].`, 2000, ct);
   const illus = inserted.filter(s => s.isIllustrative).length;
   const elapsed = Math.round((Date.now() - start) / 1000);
 
-  const cost = costSummary(ct);
+  const cost = await saveCost(ct, 'sme_discovery', { countryId, countryName });
   log(countryId, `━━━ COMPLETE in ${elapsed}s ━━━`, 'phase');
   if (verified > 0) log(countryId, `${verified} verified real businesses added`, 'ok');
   if (illus > 0)    log(countryId, `${illus} illustrative profiles added`, 'warn');
-  log(countryId, `💰 AI cost: ${cost.display}  (${cost.inputTokens.toLocaleString()} in / ${cost.outputTokens.toLocaleString()} out tokens, ${cost.searches} searches)`, 'cost');
+  log(countryId, `💰 AI cost: ${cost.display}  (Sonnet: ${cost.inputTokens.toLocaleString()}/${cost.outputTokens.toLocaleString()} tok · Haiku: ${cost.haikuInput.toLocaleString()}/${cost.haikuOutput.toLocaleString()} tok · ${cost.searches} searches)`, 'cost');
 
   sse(countryId, 'done', { total: inserted.length, verified, illustrative: illus, elapsedSeconds: elapsed, cost });
   return inserted;
@@ -434,7 +491,7 @@ async function verifyAndEnrich(candidate, countryName, ct = null) {
     ).catch(() => '');
   }
 
-  const raw = await claude(
+  const raw = await claudeHaiku(
     'Business verifier. Return ONLY valid JSON. Never fabricate URLs.',
     `Verify and profile this potential social-media-only SME.
 
@@ -494,7 +551,7 @@ Return ONLY this JSON:
 }
 
 async function generateIllustrative(countryName, ct = null) {
-  const raw = await claude('Return ONLY valid JSON arrays.',
+  const raw = await claudeHaiku('Return ONLY valid JSON arrays.',
     `Generate 8 realistic illustrative SME profiles for ${countryName}.
 ILLUSTRATIVE only — not verified real businesses. Set isIllustrative=true, all socialMedia URLs to null.
 Return JSON array: [{"name":str,"industry":str,"productType":str,"description":str,"location":"City, ${countryName}","foundedYear":null,"employeeCount":"1-5","monthlyRevenue":"$500-$2000","socialMedia":{"facebook":null,"instagram":null,"whatsapp":null},"contactEmail":null,"ownerName":str,"followers":{"facebook":800,"instagram":500},"products":[str,str,str],"priceRange":"$5-$50","tags":[str,str,str],"noWebsiteReason":"Uses Instagram DMs for all orders","opportunityScore":72,"languages":["local","English"],"isIllustrative":true}]`,
@@ -728,7 +785,7 @@ async function scrapeImages(sme, ct = null) {
     .join('\n\n')
     .slice(0, 16000);
 
-  const extracted = await claude(
+  const extracted = await claudeHaiku(
     'Extract image URLs. Return ONLY a valid JSON array of URL strings, no markdown.',
     `From this page content about "${sme.name}" in ${sme.location}, extract every image URL you can find.
 
@@ -1265,8 +1322,8 @@ app.post('/api/smes/:id/build-website', async (req, res) => {
       );
       await pool.query(`UPDATE smes SET status='website_built' WHERE id=$1`, [sme.id]);
 
-      const cost = costSummary(ct);
-      L(`💰 Cost: ${cost.display}  (${cost.inputTokens.toLocaleString()} in / ${cost.outputTokens.toLocaleString()} out, ${cost.searches} searches)`, 'ok');
+      const cost = await saveCost(ct, 'website_build', { smeId: sme.id, smeName: sme.name });
+      L(`💰 Cost: ${cost.display}  (Sonnet: ${cost.inputTokens.toLocaleString()}/${cost.outputTokens.toLocaleString()} tok · Haiku: ${cost.haikuInput.toLocaleString()}/${cost.haikuOutput.toLocaleString()} tok · ${cost.searches} searches)`, 'ok');
       L(`━━━ Website ready! ━━━`, 'phase');
 
       smeSse(sme.id, 'done', { imagesUsed: images.length, contentScraped: !!content, cost });
@@ -1310,6 +1367,7 @@ app.post('/api/smes/:id/scrape-images', async (req, res) => {
 
   const L = (msg, type = 'info') => smeLog(sme.id, msg, type);
   const abortCtx = { killed: false, killProc: null };
+  const scrapeCt = newCost();
   activeScrapes.set(String(sme.id), abortCtx);
 
   (async () => {
@@ -1334,13 +1392,13 @@ app.post('/api/smes/:id/scrape-images', async (req, res) => {
 
       if (images.length > 0) {
         L(`${images.length} photos scraped and stored in DB`, 'ok');
+        await saveCost(scrapeCt, 'image_scrape', { smeId: sme.id, smeName: sme.name });
       } else {
         L(`Python scraper returned 0 images — trying AI web-search fallback…`, 'warn');
 
         // Fallback: AI web-search image discovery
         L(`PHASE 2 — AI web-search image discovery…`, 'phase');
-        const ct = newCost();
-        const imageUrls = await scrapeImages(sme, ct);
+        const imageUrls = await scrapeImages(sme, scrapeCt);
         L(`Web search found ${imageUrls.length} candidate image URL(s)`, imageUrls.length > 0 ? 'ok' : 'warn');
 
         let stored = 0;
@@ -1362,6 +1420,7 @@ app.post('/api/smes/:id/scrape-images', async (req, res) => {
           L(`No images could be retrieved. To enable Python scraper, set IG_SESSION in .env`, 'warn');
         }
 
+        await saveCost(scrapeCt, 'image_scrape', { smeId: sme.id, smeName: sme.name });
         const finalImages = await getStoredImages(sme.id);
         smeSse(sme.id, 'scrape-done', { count: finalImages.length });
         return;
@@ -1462,7 +1521,7 @@ Requirements: curiosity subject, reference specific products, mention the no-web
       2000, ct
     );
     const email = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
-    const cost = costSummary(ct);
+    const cost = await saveCost(ct, 'email_gen', { smeId: sme.id, smeName: sme.name });
     await pool.query(
       `INSERT INTO emails (sme_id,subject,body) VALUES ($1,$2,$3) ON CONFLICT (sme_id) DO UPDATE SET subject=$2,body=$3,created_at=NOW()`,
       [sme.id, email.subject, email.body]
@@ -1482,6 +1541,85 @@ app.get('/api/smes/:id/email', async (req, res) => {
 
 // ─── SPA fallback (must be after all API routes) ──────────────────────────────
 app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
+
+// ── Cost tracking endpoints ──────────────────────────────────────────────────
+
+app.get('/api/costs', async (req, res) => {
+  try {
+    const conditions = [];
+    const params = [];
+
+    if (req.query.sme_id) {
+      params.push(req.query.sme_id);
+      conditions.push(`sme_id = $${params.length}`);
+    }
+    if (req.query.activity) {
+      params.push(req.query.activity);
+      conditions.push(`activity = $${params.length}`);
+    }
+    if (req.query.from) {
+      params.push(req.query.from);
+      conditions.push(`created_at >= $${params.length}`);
+    }
+    if (req.query.to) {
+      params.push(req.query.to);
+      conditions.push(`created_at <= $${params.length}`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+      `SELECT id, sme_id, sme_name, country_id, country_name, activity,
+              input_tokens, output_tokens, haiku_input, haiku_output,
+              web_searches, total_cost, created_at
+       FROM ai_costs ${where}
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      params
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/costs/summary', async (req, res) => {
+  try {
+    const [totals, byActivity, bySme] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)::int                       AS operations,
+          COALESCE(SUM(total_cost), 0)        AS total_cost,
+          COALESCE(SUM(input_tokens), 0)      AS input_tokens,
+          COALESCE(SUM(output_tokens), 0)     AS output_tokens,
+          COALESCE(SUM(haiku_input), 0)       AS haiku_input,
+          COALESCE(SUM(haiku_output), 0)      AS haiku_output,
+          COALESCE(SUM(web_searches), 0)      AS web_searches
+        FROM ai_costs
+      `),
+      pool.query(`
+        SELECT activity,
+               COUNT(*)::int                  AS operations,
+               COALESCE(SUM(total_cost), 0)   AS total_cost
+        FROM ai_costs
+        GROUP BY activity
+        ORDER BY total_cost DESC
+      `),
+      pool.query(`
+        SELECT sme_name,
+               COUNT(*)::int                  AS operations,
+               COALESCE(SUM(total_cost), 0)   AS total_cost
+        FROM ai_costs
+        WHERE sme_name IS NOT NULL
+        GROUP BY sme_name
+        ORDER BY total_cost DESC
+        LIMIT 20
+      `),
+    ]);
+    res.json({
+      totals: totals.rows[0],
+      byActivity: byActivity.rows,
+      bySme: bySme.rows,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // Boot
 const PORT = process.env.PORT || 3001;
