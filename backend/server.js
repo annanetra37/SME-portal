@@ -350,12 +350,14 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
     : '';
 
   const queries = [
-    `site:facebook.com "${countryName}"${industryClause} small business shop page`,
-    `site:instagram.com "${countryName}"${industryClause} small business shop seller`,
-    `"${countryName}"${industryClause} "facebook.com" OR "instagram.com" no website`,
-    `"${countryName}"${industryClause} small business "no website" OR "order via DM" instagram facebook`,
-    `"${countryName}"${industryClause} local seller social media entrepreneur facebook instagram`,
-    `"${countryName}"${industryClause} local business facebook instagram profile`,
+    `site:facebook.com "${countryName}"${industryClause} small business`,
+    `site:instagram.com "${countryName}"${industryClause} shop seller`,
+    `"${countryName}"${industryClause} small business facebook OR instagram`,
+    `"${countryName}"${industryClause} local artisan handmade seller online`,
+    `"${countryName}"${industryClause} entrepreneur micro business social media`,
+    `"${countryName}"${industryClause} local shop seller instagram facebook whatsapp`,
+    `"${countryName}"${industryClause} homemade products seller buy online`,
+    `"${countryName}"${industryClause} small business directory local market`,
   ];
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
@@ -363,23 +365,23 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
   const combinedText = results
     .map(r => r.status === 'fulfilled' ? r.value : '')
     .join('\n\n===\n\n')
-    .slice(0, 22000);
+    .slice(0, 30000);
 
   log(countryId, 'Extracting candidate businesses from search results...');
   const extractRaw = await claudeHaiku(
     'Return ONLY valid JSON arrays, no markdown.',
-    `From these web search results about ${countryName}, extract every distinct small business that appears to operate on Facebook or Instagram WITHOUT its own website.
+    `From these web search results about ${countryName}, extract every distinct micro or small business name you can find.
 
 RESULTS:
 ${combinedText}
 
 Rules:
-- Only include names actually in the text
-- Look for facebook.com/PageName or instagram.com/handle patterns — capture the FULL URL
-- Skip large chains, government orgs, NGOs
-- Do NOT invent names or URLs
+- Extract ANY small business name mentioned — a name is enough, social URLs are a bonus
+- If you see facebook.com/PageName or instagram.com/handle patterns, capture them — but don't require them
+- Skip large chains (50+ employees), government orgs, NGOs, news outlets
+- Do NOT invent names or URLs; only use what is literally in the text
 
-Return JSON (max 30):
+Return JSON (max 40):
 [{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/clothing/beauty/jewelry/home/agriculture/education/services/other","confidence":"high/medium/low"}]
 If nothing, return [].`,
     4000, ct
@@ -421,14 +423,17 @@ If nothing, return [].`,
   if (candidates.length < 5) {
     log(countryId, 'Too few candidates — running broader fallback search...', 'warn');
     const fbResults = await Promise.allSettled([
-      webSearch(`${countryName} small business facebook instagram seller 2024`, ct),
-      webSearch(`${countryName} entrepreneur social media shop no website`, ct),
-      webSearch(`${countryName} local artisan food clothing beauty online social media`, ct),
+      webSearch(`${countryName} small business instagram facebook shop seller`, ct),
+      webSearch(`${countryName} local entrepreneur artisan seller online`, ct),
+      webSearch(`${countryName} homemade products local market small business`, ct),
+      webSearch(`site:facebook.com "${countryName}" shop`, ct),
+      webSearch(`site:instagram.com "${countryName}" shop seller handmade`, ct),
     ]);
-    const fbText = fbResults.map(r => r.status === 'fulfilled' ? r.value : '').join('\n===\n').slice(0, 12000);
+    const fbText = fbResults.map(r => r.status === 'fulfilled' ? r.value : '').join('\n===\n').slice(0, 18000);
     const fbRaw = await claude('Return ONLY valid JSON arrays.',
-      `Extract small business names from ${countryName} in these results:
+      `Extract ANY small or micro business names from ${countryName} found in these search results.
 ${fbText}
+Include a name even if you see no social URL — Phase 2 will find those.
 Return: [{"name":"name","fbUrl":null,"igUrl":null,"industryHint":"guess","confidence":"low"}]
 If nothing, return [].`, 2000, ct);
     try {
