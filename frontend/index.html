@@ -404,6 +404,7 @@
     .btn-primary:hover { background: #7c74ff; transform: translateY(-1px); box-shadow: 0 4px 20px #6c63ff40; }
     .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
     .btn-secondary:hover { background: #222230; }
+    .btn-secondary.active { background: var(--accent); color: #fff; border-color: var(--accent); }
     .btn-danger { background: #ff4d6d18; color: var(--danger); border: 1px solid #ff4d6d30; }
     .btn-danger:hover { background: #ff4d6d28; }
     .btn-success { background: #43e97b18; color: var(--success); border: 1px solid #43e97b30; }
@@ -455,6 +456,35 @@
     .stat-icon { font-size: 22px; margin-bottom: 12px; }
     .stat-value { font-family: 'Syne', sans-serif; font-size: 32px; font-weight: 800; }
     .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+    /* ─── Search Filters Panel ───────────────────────────── */
+    .search-filters-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin-bottom: 20px;
+    }
+    .filter-section { margin-bottom: 14px; }
+    .filter-section:last-child { margin-bottom: 0; }
+    .filter-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 8px; }
+    .industry-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+      background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+      cursor: pointer; transition: all .15s; user-select: none;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--accent); }
+    .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .filter-row { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-input {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); padding: 7px 12px; font-size: 13px; width: 140px; outline: none;
+    }
+    .filter-input:focus { border-color: var(--accent); }
+    .filter-hint { font-size: 11px; color: var(--muted); padding-top: 4px; }
+    .filter-hint-group { justify-content: flex-end; padding-bottom: 2px; }
 
     /* SME Grid */
     .sme-grid {
@@ -1055,6 +1085,37 @@
 
     <!-- Country SMEs -->
     <div class="view" id="view-country">
+      <!-- Search filters panel -->
+      <div class="search-filters-panel" id="searchFiltersPanel" style="display:none">
+        <div class="filter-section">
+          <label class="filter-label">Industry / Sector</label>
+          <div class="industry-chips" id="industryChips">
+            <span class="chip" data-value="Food &amp; Beverage">🍔 Food &amp; Beverage</span>
+            <span class="chip" data-value="Fashion &amp; Clothing">👗 Fashion &amp; Clothing</span>
+            <span class="chip" data-value="Beauty &amp; Cosmetics">💄 Beauty &amp; Cosmetics</span>
+            <span class="chip" data-value="Crafts &amp; Handmade">🧶 Crafts &amp; Handmade</span>
+            <span class="chip" data-value="Jewelry">💎 Jewelry</span>
+            <span class="chip" data-value="Home Goods">🏠 Home Goods</span>
+            <span class="chip" data-value="Agriculture">🌾 Agriculture</span>
+            <span class="chip" data-value="Education">📚 Education</span>
+            <span class="chip" data-value="Services">🔧 Services</span>
+          </div>
+        </div>
+        <div class="filter-section filter-row">
+          <div class="filter-group">
+            <label class="filter-label">Min Followers</label>
+            <input type="number" id="minFollowers" class="filter-input" placeholder="e.g. 500" min="0">
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Max Followers</label>
+            <input type="number" id="maxFollowers" class="filter-input" placeholder="e.g. 50000" min="0">
+          </div>
+          <div class="filter-group filter-hint-group">
+            <label class="filter-label">&nbsp;</label>
+            <span class="filter-hint">Total FB + IG followers combined</span>
+          </div>
+        </div>
+      </div>
       <div id="agentStatus"></div>
       <div class="sme-grid" id="smeGrid"></div>
       <div id="smeEmpty"></div>
@@ -1433,6 +1494,9 @@ async function showCountryView(country) {
     <div class="sub">SME Market Research — Social Media Only Businesses</div>
   `;
   document.getElementById('topbarActions').innerHTML = `
+    <button class="btn btn-secondary" onclick="toggleSearchFilters()" id="filtersToggleBtn" title="Search filters">
+      ⚙️ Filters
+    </button>
     <button class="btn btn-primary" onclick="searchSMEs('${country.id}')" id="searchBtn">
       🔍 Search SMEs
     </button>
@@ -1634,8 +1698,19 @@ async function searchSMEs(countryId) {
     btn.innerHTML = `🔍 Search SMEs`;
   });
 
+  // Collect filters
+  const selectedIndustries = [...document.querySelectorAll('#industryChips .chip.active')]
+    .map(c => c.dataset.value);
+  const minF = document.getElementById('minFollowers')?.value;
+  const maxF = document.getElementById('maxFollowers')?.value;
+  const filters = {
+    industries:   selectedIndustries,
+    minFollowers: minF ? Number(minF) : null,
+    maxFollowers: maxF ? Number(maxF) : null,
+  };
+
   try {
-    await api('POST', `/countries/${countryId}/search-smes`);
+    await api('POST', `/countries/${countryId}/search-smes`, filters);
   } catch (err) {
     appendLog(`Failed to start: ${err.message}`, 'skip');
     es.close();
@@ -1643,6 +1718,22 @@ async function searchSMEs(countryId) {
     btn.innerHTML = `🔍 Search SMEs`;
   }
 }
+
+function toggleSearchFilters() {
+  const panel = document.getElementById('searchFiltersPanel');
+  const btn   = document.getElementById('filtersToggleBtn');
+  if (!panel) return;
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+  if (btn) btn.classList.toggle('active', !visible);
+}
+
+// Industry chip toggle
+document.addEventListener('click', e => {
+  if (e.target.classList.contains('chip') && e.target.closest('#industryChips')) {
+    e.target.classList.toggle('active');
+  }
+});
 
 
 function addSmeCard(s) {
