@@ -613,14 +613,7 @@ Return ONLY this JSON:
   return { skipped: false, profile };
 }
 
-async function generateIllustrative(countryName, ct = null) {
-  const raw = await claudeHaiku('Return ONLY valid JSON arrays.',
-    `Generate 8 realistic illustrative SME profiles for ${countryName}.
-ILLUSTRATIVE only — not verified real businesses. Set isIllustrative=true, all socialMedia URLs to null.
-Return JSON array: [{"name":str,"industry":str,"productType":str,"description":str,"location":"City, ${countryName}","foundedYear":null,"employeeCount":"1-5","monthlyRevenue":"$500-$2000","socialMedia":{"facebook":null,"instagram":null,"whatsapp":null},"contactEmail":null,"ownerName":str,"followers":{"facebook":800,"instagram":500},"products":[str,str,str],"priceRange":"$5-$50","tags":[str,str,str],"noWebsiteReason":"Uses Instagram DMs for all orders","opportunityScore":72,"languages":["local","English"],"isIllustrative":true}]`,
-    5000, ct);
-  return JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
-}
+async function generateIllustrative() { return []; } // removed — no fake profiles
 
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1205,6 +1198,53 @@ app.post('/api/countries', async (req, res) => {
 app.delete('/api/countries/:id', async (req, res) => {
   try { await pool.query('DELETE FROM countries WHERE id=$1', [req.params.id]); res.json({ ok: true }); }
   catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SME edit & delete ─────────────────────────────────────────────────────────
+app.put('/api/smes/:id', async (req, res) => {
+  try {
+    const { name, industry, productType, description, location, contactEmail,
+            ownerName, socialMedia, followers, noWebsiteReason, opportunityScore } = req.body;
+    const { rows } = await pool.query(
+      `UPDATE smes SET
+        name               = COALESCE($1,  name),
+        industry           = COALESCE($2,  industry),
+        product_type       = COALESCE($3,  product_type),
+        description        = COALESCE($4,  description),
+        location           = COALESCE($5,  location),
+        contact_email      = COALESCE($6,  contact_email),
+        owner_name         = COALESCE($7,  owner_name),
+        social_media       = COALESCE($8,  social_media),
+        followers          = COALESCE($9,  followers),
+        no_website_reason  = COALESCE($10, no_website_reason),
+        opportunity_score  = COALESCE($11, opportunity_score)
+       WHERE id = $12 RETURNING *`,
+      [
+        name        || null,
+        industry    || null,
+        productType || null,
+        description || null,
+        location    || null,
+        contactEmail !== undefined ? contactEmail : null,
+        ownerName   || null,
+        socialMedia  ? JSON.stringify(socialMedia)  : null,
+        followers    ? JSON.stringify(followers)    : null,
+        noWebsiteReason || null,
+        opportunityScore != null ? Number(opportunityScore) : null,
+        req.params.id,
+      ]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'SME not found' });
+    res.json(normalizeSme(rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/smes/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM sme_images WHERE sme_id=$1', [req.params.id]);
+    await pool.query('DELETE FROM smes       WHERE id=$1',     [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── FIX #1: Load SMEs from DB when opening country ───────────────────────────
