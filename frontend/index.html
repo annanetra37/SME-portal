@@ -2291,27 +2291,79 @@ async function stopScraping(smeId) {
 
 async function deploySite(smeId) {
   const btn = document.getElementById(`deployBtn-${smeId}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = `<div class="spinner"></div> Deploying...`; }
-  toast('Deployer Agent launching...', 'info');
+  if (btn) { btn.disabled = true; btn.innerHTML = `<div class="spinner"></div> Deploying…`; }
 
-  try {
-    const result = await api('POST', `/smes/${smeId}/deploy`);
-    if (state.websites[smeId]) state.websites[smeId].deployedUrl = result.url;
+  const sme = state.currentSme;
+  const smeName = sme?.name || 'SME';
 
+  // Switch to website tab and show terminal (same terminal as build)
+  const websiteTab = document.querySelector('.detail-tab[onclick*="website"]');
+  if (websiteTab) websiteTab.click();
+  showBuildTerminal(smeId, `deployer — ${smeName}`, 'tab-website');
+  buildTermLog(smeId, `Starting Railway deployment for "${smeName}"…`, 'phase');
+
+  let deployDone = false;
+
+  // Open SSE FIRST (reuses the build-stream endpoint), then trigger POST
+  const es = new EventSource(`${API}/smes/${smeId}/build-stream`);
+
+  es.onopen = async () => {
+    try {
+      await api('POST', `/smes/${smeId}/deploy`);
+    } catch (e) {
+      es.close();
+      buildTermLog(smeId, `Failed to start deployment: ${e.message}`, 'warn');
+      finalizeBuildTerminal(smeId, false);
+      toast(`Deploy failed: ${e.message}`, 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Deploy'; }
+    }
+  };
+
+  es.addEventListener('log', e => {
+    const { msg, type } = JSON.parse(e.data);
+    buildTermLog(smeId, msg, type);
+  });
+
+  es.addEventListener('deploy-done', async e => {
+    es.close();
+    deployDone = true;
+    const { url, repoUrl } = JSON.parse(e.data);
+
+    finalizeBuildTerminal(smeId, true);
+
+    // Update local state
+    if (state.websites[smeId]) state.websites[smeId].deployedUrl = url;
     for (const list of Object.values(state.smes)) {
       const idx = list.findIndex(s => s.id === smeId);
-      if (idx !== -1) { list[idx].status = 'deployed'; list[idx].deployedUrl = result.url; break; }
+      if (idx !== -1) { list[idx].status = 'deployed'; list[idx].deployedUrl = url; break; }
     }
-
-    toast(`🚀 Deployed! URL: ${result.url}`, 'success');
     if (state.currentSme?.id === smeId) {
+      state.currentSme.status = 'deployed';
+      state.currentSme.deployedUrl = url;
       renderDetailActions(state.currentSme);
       renderWebsiteTab(state.currentSme);
     }
-    if (state.currentCountry) renderSMEGrid(state.currentCountry.id);
-  } catch {} finally {
+
+    toast(`🚀 Live at ${url}`, 'success');
     if (btn) { btn.disabled = false; btn.innerHTML = '✅ Deployed'; }
-  }
+  });
+
+  es.addEventListener('deploy-error', e => {
+    if (deployDone) return;
+    es.close();
+    const { message: msg } = JSON.parse(e.data);
+    finalizeBuildTerminal(smeId, false);
+    toast(`Deploy failed: ${msg}`, 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Deploy'; }
+  });
+
+  es.addEventListener('error', () => {
+    if (deployDone) return;
+    es.close();
+    buildTermLog(smeId, 'Stream connection lost', 'warn');
+    finalizeBuildTerminal(smeId, false);
+    if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Deploy'; }
+  });
 }
 
 async function generateEmail(smeId) {
