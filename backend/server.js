@@ -481,16 +481,23 @@ If nothing, return [].`, 2000, ct);
         continue;
       }
 
-      // Follower filter
+      // Follower filter — 0 means count wasn't found in search text (unknown), not confirmed zero.
+      // Only reject if we have an actual confirmed count AND it falls outside the range.
       if (hasFollowerFilter) {
-        const totalFollowers = (profile.followers?.facebook || 0) + (profile.followers?.instagram || 0);
-        if (minFollowers != null && totalFollowers < minFollowers) {
-          log(countryId, `  SKIP "${profile.name}" — followers ${totalFollowers} < min ${minFollowers}`, 'skip');
-          continue;
-        }
-        if (maxFollowers != null && totalFollowers > maxFollowers) {
-          log(countryId, `  SKIP "${profile.name}" — followers ${totalFollowers} > max ${maxFollowers}`, 'skip');
-          continue;
+        const fbF  = profile.followers?.facebook  || 0;
+        const igF  = profile.followers?.instagram || 0;
+        const totalFollowers = fbF + igF;
+        if (totalFollowers === 0) {
+          log(countryId, `  "${profile.name}" — follower count not found in search, keeping (unknown)`, 'info');
+        } else {
+          if (minFollowers != null && totalFollowers < minFollowers) {
+            log(countryId, `  SKIP "${profile.name}" — ${totalFollowers.toLocaleString()} followers < min ${minFollowers.toLocaleString()}`, 'skip');
+            continue;
+          }
+          if (maxFollowers != null && totalFollowers > maxFollowers) {
+            log(countryId, `  SKIP "${profile.name}" — ${totalFollowers.toLocaleString()} followers > max ${maxFollowers.toLocaleString()}`, 'skip');
+            continue;
+          }
         }
       }
 
@@ -514,20 +521,25 @@ If nothing, return [].`, 2000, ct);
     }
   }
 
-  // Fallback illustrative profiles
+  // Fallback illustrative profiles — only when no filters are active.
+  // With filters, show no results rather than off-industry/off-criteria made-up profiles.
   if (inserted.length === 0) {
-    log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
-    const profiles = await generateIllustrative(countryName, ct);
-    for (const p of profiles) {
-      const key = p.name.toLowerCase().trim();
-      if (existingNames.has(key)) continue;
-      existingNames.add(key);
-      try {
-        const saved = await insertSme(countryId, p);
-        inserted.push(saved);
-        sse(countryId, 'sme', saved);
-        log(countryId, `  Illustrative: "${p.name}"`, 'sme');
-      } catch {}
+    if (hasIndustryFilter || hasFollowerFilter) {
+      log(countryId, 'No businesses found matching your filters — try broader criteria or remove filters', 'warn');
+    } else {
+      log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
+      const profiles = await generateIllustrative(countryName, ct);
+      for (const p of profiles) {
+        const key = p.name.toLowerCase().trim();
+        if (existingNames.has(key)) continue;
+        existingNames.add(key);
+        try {
+          const saved = await insertSme(countryId, p);
+          inserted.push(saved);
+          sse(countryId, 'sme', saved);
+          log(countryId, `  Illustrative: "${p.name}"`, 'sme');
+        } catch {}
+      }
     }
   }
 
@@ -565,10 +577,21 @@ Industry hint: ${industryHint || 'unknown'}
 Discovered URLs: facebook="${fbUrl || 'none'}" instagram="${igUrl || 'none'}"
 Search results: ${searchText.slice(0, 4000) || '(using discovery URLs)'}
 
+WEBSITE CHECK — read the search results carefully and look for any URL that:
+  - belongs to this specific business
+  - is NOT facebook.com, instagram.com, twitter.com, tiktok.com, youtube.com, linkedin.com, wa.me, whatsapp
+  - is NOT a directory/review site (yellowpages, yelp, tripadvisor, google maps, zomato, foursquare)
+  If you find such a URL (e.g. nuarjewelry.com, armeniashop.am, mybrand.store) → rejected=true.
+
 Rules:
-1. If it has its own website (not fb/ig) → rejected=true, rejectionReason="has website"
-2. If no confirmed FB or IG URL → rejected=true, rejectionReason="no confirmed social URL"
-3. Only use URLs actually seen — in discovery URLs above OR in search results. NEVER construct URLs.
+1. If business has its own non-social website → rejected=true, rejectionReason="has website: [domain]"
+2. If no confirmed FB or IG URL can be found → rejected=true, rejectionReason="no confirmed social URL"
+3. Only use URLs actually seen in discovery URLs or search results. NEVER construct or guess URLs.
+
+FOLLOWER COUNTS — scan the search text for follower numbers. Look for patterns like:
+  "16.3K followers", "5,000 Followers", "1.2K فالوور", "12K подписчиков", etc.
+  Use the EXACT number found. Convert K to thousands (16.3K → 16300).
+  Set to 0 ONLY if no follower count appears anywhere in the search text.
 
 Return ONLY this JSON:
 {
@@ -589,7 +612,7 @@ Return ONLY this JSON:
   },
   "contactEmail": null,
   "ownerName": "real name if found or realistic local name",
-  "followers": {"facebook": 1000, "instagram": 600},
+  "followers": {"facebook": 0, "instagram": 0},
   "products": ["product1", "product2", "product3"],
   "priceRange": "$X-$Y",
   "tags": ["tag1", "tag2", "tag3"],
