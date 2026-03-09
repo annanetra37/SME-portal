@@ -609,12 +609,15 @@ function runPyScraper(url, maxImages, logCb = null) {
         console.error(`  ⚠️  Scraper exited ${code} for ${url}\n${stderr.slice(-800)}`);
         if (logCb) logCb(`Scraper exited with code ${code} — check IG/FB credentials in .env`);
       }
-      try { rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
-      resolve({ records });
+      // NOTE: do NOT delete outDir here — caller must read image files first, then clean up
+      resolve({ records, outDir });
     });
   });
 
-  const kill = () => { try { proc.kill('SIGTERM'); } catch (_) {} };
+  const kill = () => {
+    try { proc.kill('SIGTERM'); } catch (_) {}
+    try { rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
+  };
 
   return { promise, kill };
 }
@@ -652,10 +655,11 @@ async function scrapeAndStoreImages(sme, maxImages = 15, logCb = null, abortCtx 
 
     // Register kill function so external stop can terminate the subprocess
     if (abortCtx) abortCtx.killProc = kill;
-    const { records } = await promise;
+    const { records, outDir } = await promise;
     if (abortCtx) abortCtx.killProc = null;
 
     if (abortCtx?.killed) {
+      try { rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
       _log(`Scrape aborted by user`);
       break;
     }
@@ -676,6 +680,8 @@ async function scrapeAndStoreImages(sme, maxImages = 15, logCb = null, abortCtx 
       }
     }
 
+    // Clean up temp dir now that all files have been read
+    try { rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
     _log(`${records.length} images scraped and stored from ${url}`);
   }
 
