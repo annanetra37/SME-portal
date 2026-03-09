@@ -1653,10 +1653,7 @@ app.get('/api/smes/:id/email', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── SPA fallback (must be after all API routes) ──────────────────────────────
-app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
-
-// ── Cost tracking endpoints ──────────────────────────────────────────────────
+// ── Cost tracking endpoints (MUST be before SPA wildcard) ────────────────────
 
 app.get('/api/costs', async (req, res) => {
   try {
@@ -1734,6 +1731,9 @@ app.get('/api/costs/summary', async (req, res) => {
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── SPA fallback (must be last) ──────────────────────────────────────────────
+app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
 
 // Boot
 const PORT = process.env.PORT || 3001;
