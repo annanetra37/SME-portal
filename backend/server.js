@@ -1712,10 +1712,14 @@ app.post('/api/smes/:id/deploy', async (req, res) => {
       L('STEP 3 — Creating Railway project…', 'phase');
       const projData = await railwayGql(`
         mutation projectCreate($input: ProjectCreateInput!) {
-          projectCreate(input: $input) { id defaultEnvironment { id } }
+          projectCreate(input: $input) {
+            id
+            environments { edges { node { id name } } }
+          }
         }`, { input: { name: repoName } });
       const projectId = projData.projectCreate.id;
-      const environmentId = projData.projectCreate.defaultEnvironment.id;
+      // First environment is always "production" (the Railway default)
+      const environmentId = projData.projectCreate.environments.edges[0].node.id;
       L(`Railway project created`, 'ok');
 
       // ── Step 4: Railway service ──────────────────────────────────────────────
@@ -1753,10 +1757,10 @@ app.post('/api/smes/:id/deploy', async (req, res) => {
         try {
           const deplData = await railwayGql(`
             query deployments($input: DeploymentListInput!) {
-              deployments(input: $input) {
-                edges { node { id status } }
+              deployments(first: 1, input: $input) {
+                edges { node { id status staticUrl } }
               }
-            }`, { input: { serviceId, environmentId } });
+            }`, { input: { projectId, serviceId, environmentId } });
           const nodes = deplData.deployments.edges;
           if (nodes.length) {
             finalStatus = nodes[0].node.status;
