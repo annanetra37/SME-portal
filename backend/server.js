@@ -306,17 +306,13 @@ async function insertSme(countryId, s) {
 // SEARCH PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function runSearchPipeline(countryId, countryName, filters = {}) {
+async function runSearchPipeline(countryId, countryName) {
   const TARGET = 15;
   const PARALLEL = 5;
   const TIMEOUT = 4 * 60 * 1000;
   const start = Date.now();
   const inserted = [];
   const ct = newCost();
-
-  const { industries = [], minFollowers = null, maxFollowers = null } = filters;
-  const hasIndustryFilter = industries.length > 0;
-  const hasFollowerFilter = minFollowers != null || maxFollowers != null;
 
   // ── FIX #2: Load existing names from DB to avoid duplicates ──────────────
   const { rows: existing } = await pool.query(
@@ -325,39 +321,15 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
   const existingNames = new Set(existing.map(r => r.name));
   log(countryId, `Found ${existingNames.size} existing businesses in DB — will skip duplicates`, 'info');
 
-  if (hasIndustryFilter) log(countryId, `Industry filter: ${industries.join(', ')}`, 'info');
-  if (hasFollowerFilter) log(countryId, `Follower range: ${minFollowers ?? '0'}–${maxFollowers ?? '∞'}`, 'info');
-
   // ── Phase 1: Parallel discovery ──────────────────────────────────────────
   log(countryId, `PHASE 1 — Parallel discovery for "${countryName}"`, 'phase');
-
-  // Add industry terms to narrow searches — but KEEP the proven site:facebook.com /
-  // site:instagram.com query structure that reliably surfaces social media URLs.
-  const industryTermsMap = {
-    'Food & Beverage':    'food bakery restaurant catering homemade meals',
-    'Fashion & Clothing': 'fashion clothing boutique apparel tailor',
-    'Beauty & Cosmetics': 'beauty cosmetics skincare makeup hair salon',
-    'Crafts & Handmade':  'handmade crafts artisan DIY custom',
-    'Jewelry':            'jewelry jewellery accessories rings necklace',
-    'Home Goods':         'home goods furniture decor interior',
-    'Agriculture':        'agriculture farm organic produce',
-    'Education':          'education tutoring courses training',
-    'Services':           'services repair cleaning delivery laundry',
-    'Other':              '',
-  };
-  const industryClause = hasIndustryFilter
-    ? ' ' + industries.map(ind => industryTermsMap[ind] || ind.toLowerCase()).join(' ')
-    : '';
-
   const queries = [
-    `site:facebook.com "${countryName}"${industryClause} small business`,
-    `site:instagram.com "${countryName}"${industryClause} shop seller`,
-    `"${countryName}"${industryClause} small business facebook OR instagram`,
-    `"${countryName}"${industryClause} local artisan handmade seller online`,
-    `"${countryName}"${industryClause} entrepreneur micro business social media`,
-    `"${countryName}"${industryClause} local shop seller instagram facebook whatsapp`,
-    `"${countryName}"${industryClause} homemade products seller buy online`,
-    `"${countryName}"${industryClause} small business directory local market`,
+    `site:facebook.com "${countryName}" small business shop page handmade`,
+    `site:instagram.com "${countryName}" small business shop seller local`,
+    `"${countryName}" handmade food shop "facebook.com" OR "instagram.com" no website`,
+    `"${countryName}" small business "no website" OR "order via DM" instagram facebook 2024`,
+    `"${countryName}" homemade artisan crafts clothing beauty jewelry local seller social media`,
+    `"${countryName}" local food producer baker fashion boutique facebook instagram profile`,
   ];
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
@@ -365,24 +337,24 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
   const combinedText = results
     .map(r => r.status === 'fulfilled' ? r.value : '')
     .join('\n\n===\n\n')
-    .slice(0, 30000);
+    .slice(0, 22000);
 
   log(countryId, 'Extracting candidate businesses from search results...');
   const extractRaw = await claudeHaiku(
     'Return ONLY valid JSON arrays, no markdown.',
-    `From these web search results about ${countryName}, extract every distinct micro or small business name you can find.
+    `From these web search results about ${countryName}, extract every distinct small business that appears to operate on Facebook or Instagram WITHOUT its own website.
 
 RESULTS:
 ${combinedText}
 
 Rules:
-- Extract ANY small business name mentioned — a name is enough, social URLs are a bonus
-- If you see facebook.com/PageName or instagram.com/handle patterns, capture them — but don't require them
-- Skip large chains (50+ employees), government orgs, NGOs, news outlets
-- Do NOT invent names or URLs; only use what is literally in the text
+- Only include names actually in the text
+- Look for facebook.com/PageName or instagram.com/handle patterns
+- Skip large chains, government orgs, NGOs
+- Do NOT invent names
 
-Return JSON (max 40):
-[{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/clothing/beauty/jewelry/home/agriculture/education/services/other","confidence":"high/medium/low"}]
+Return JSON (max 30):
+[{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/beauty/etc","confidence":"high/medium/low"}]
 If nothing, return [].`,
     4000, ct
   );
@@ -393,47 +365,18 @@ If nothing, return [].`,
 
   log(countryId, `Found ${candidates.length} candidates`, candidates.length > 0 ? 'ok' : 'warn');
 
-  // ── Industry post-filter: keyword match against industryHint (reliable, not AI instruction) ──
-  if (hasIndustryFilter && candidates.length > 0) {
-    const industryKeywords = {
-      'Food & Beverage':    ['food', 'beverage', 'bakery', 'restaurant', 'cater', 'snack', 'meal', 'drink', 'coffee', 'tea', 'cook'],
-      'Fashion & Clothing': ['fashion', 'cloth', 'apparel', 'boutique', 'tailor', 'dress', 'wear', 'textile', 'shirt', 'suit'],
-      'Beauty & Cosmetics': ['beauty', 'cosmetic', 'skincare', 'makeup', 'hair', 'salon', 'spa', 'nail', 'skin', 'perfume'],
-      'Crafts & Handmade':  ['craft', 'handmade', 'artisan', 'diy', 'custom', 'handcraft', 'pottery', 'knit', 'sew'],
-      'Jewelry':            ['jewelry', 'jewellery', 'accessori', 'ring', 'necklace', 'gem', 'bead', 'bracelet'],
-      'Home Goods':         ['home', 'furniture', 'decor', 'interior', 'household', 'kitchenware', 'candle'],
-      'Agriculture':        ['agricultur', 'farm', 'organic', 'produce', 'vegetable', 'fruit', 'crop', 'harvest'],
-      'Education':          ['educat', 'tutor', 'training', 'course', 'school', 'learn', 'teach', 'class'],
-      'Services':           ['service', 'repair', 'clean', 'delivery', 'laundry', 'fix', 'plumb', 'electric'],
-      'Other':              [],
-    };
-    const activeKeywords = industries.flatMap(ind => industryKeywords[ind] || [ind.toLowerCase()]);
-    const before = candidates.length;
-    candidates = candidates.filter(c => {
-      if (!c.industryHint) return true; // keep unclassified — verifyAndEnrich will decide
-      const hint = c.industryHint.toLowerCase();
-      return activeKeywords.some(kw => hint.includes(kw));
-    });
-    if (before > candidates.length) {
-      log(countryId, `Industry filter: removed ${before - candidates.length} off-industry candidates (kept ${candidates.length})`, 'info');
-    }
-  }
-
   // Fallback broader search
   if (candidates.length < 5) {
     log(countryId, 'Too few candidates — running broader fallback search...', 'warn');
     const fbResults = await Promise.allSettled([
-      webSearch(`${countryName} small business instagram facebook shop seller`, ct),
-      webSearch(`${countryName} local entrepreneur artisan seller online`, ct),
-      webSearch(`${countryName} homemade products local market small business`, ct),
-      webSearch(`site:facebook.com "${countryName}" shop`, ct),
-      webSearch(`site:instagram.com "${countryName}" shop seller handmade`, ct),
+      webSearch(`${countryName} small business facebook instagram seller 2024`, ct),
+      webSearch(`${countryName} entrepreneur social media shop no website`, ct),
+      webSearch(`${countryName} local artisan food clothing beauty online social media`, ct),
     ]);
-    const fbText = fbResults.map(r => r.status === 'fulfilled' ? r.value : '').join('\n===\n').slice(0, 18000);
+    const fbText = fbResults.map(r => r.status === 'fulfilled' ? r.value : '').join('\n===\n').slice(0, 12000);
     const fbRaw = await claude('Return ONLY valid JSON arrays.',
-      `Extract ANY small or micro business names from ${countryName} found in these search results.
+      `Extract small business names from ${countryName} in these results:
 ${fbText}
-Include a name even if you see no social URL — Phase 2 will find those.
 Return: [{"name":"name","fbUrl":null,"igUrl":null,"industryHint":"guess","confidence":"low"}]
 If nothing, return [].`, 2000, ct);
     try {
@@ -486,26 +429,6 @@ If nothing, return [].`, 2000, ct);
         continue;
       }
 
-      // Follower filter — 0 means count wasn't found in search text (unknown), not confirmed zero.
-      // Only reject if we have an actual confirmed count AND it falls outside the range.
-      if (hasFollowerFilter) {
-        const fbF  = profile.followers?.facebook  || 0;
-        const igF  = profile.followers?.instagram || 0;
-        const totalFollowers = fbF + igF;
-        if (totalFollowers === 0) {
-          log(countryId, `  "${profile.name}" — follower count not found in search, keeping (unknown)`, 'info');
-        } else {
-          if (minFollowers != null && totalFollowers < minFollowers) {
-            log(countryId, `  SKIP "${profile.name}" — ${totalFollowers.toLocaleString()} followers < min ${minFollowers.toLocaleString()}`, 'skip');
-            continue;
-          }
-          if (maxFollowers != null && totalFollowers > maxFollowers) {
-            log(countryId, `  SKIP "${profile.name}" — ${totalFollowers.toLocaleString()} followers > max ${maxFollowers.toLocaleString()}`, 'skip');
-            continue;
-          }
-        }
-      }
-
       // Double-check deduplication at insert time
       const nameKey = profile.name.toLowerCase().trim();
       if (existingNames.has(nameKey)) {
@@ -526,25 +449,20 @@ If nothing, return [].`, 2000, ct);
     }
   }
 
-  // Fallback illustrative profiles — only when no filters are active.
-  // With filters, show no results rather than off-industry/off-criteria made-up profiles.
+  // Fallback illustrative profiles
   if (inserted.length === 0) {
-    if (hasIndustryFilter || hasFollowerFilter) {
-      log(countryId, 'No businesses found matching your filters — try broader criteria or remove filters', 'warn');
-    } else {
-      log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
-      const profiles = await generateIllustrative(countryName, ct);
-      for (const p of profiles) {
-        const key = p.name.toLowerCase().trim();
-        if (existingNames.has(key)) continue;
-        existingNames.add(key);
-        try {
-          const saved = await insertSme(countryId, p);
-          inserted.push(saved);
-          sse(countryId, 'sme', saved);
-          log(countryId, `  Illustrative: "${p.name}"`, 'sme');
-        } catch {}
-      }
+    log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
+    const profiles = await generateIllustrative(countryName, ct);
+    for (const p of profiles) {
+      const key = p.name.toLowerCase().trim();
+      if (existingNames.has(key)) continue;
+      existingNames.add(key);
+      try {
+        const saved = await insertSme(countryId, p);
+        inserted.push(saved);
+        sse(countryId, 'sme', saved);
+        log(countryId, `  Illustrative: "${p.name}"`, 'sme');
+      } catch {}
     }
   }
 
@@ -562,81 +480,32 @@ If nothing, return [].`, 2000, ct);
   return inserted;
 }
 
-// ── Deterministically extract social media URLs from text (no AI hallucination) ──
-function extractSocialUrls(text) {
-  const clean = u => u.replace(/[,)"'\]>\s]+$/, '').split('?')[0].split('#')[0];
-  const SKIP_FB = new Set(['sharer','share','photo','watch','events','groups','hashtag',
-                            'stories','plugins','dialog','login','help','pages','business']);
-  const SKIP_IG = new Set(['p','reel','explore','stories','tv','reels','accounts']);
-  const fb = [...new Set(
-    [...text.matchAll(/https?:\/\/(?:www\.)?facebook\.com\/([a-zA-Z0-9._\-]{2,})/g)]
-      .filter(m => !SKIP_FB.has(m[1].toLowerCase().split('/')[0]))
-      .map(m => clean('https://www.facebook.com/' + m[1]))
-  )];
-  const ig = [...new Set(
-    [...text.matchAll(/https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,})/g)]
-      .filter(m => !SKIP_IG.has(m[1].toLowerCase().split('/')[0]))
-      .map(m => clean('https://www.instagram.com/' + m[1]))
-  )];
-  return { facebook: fb, instagram: ig };
-}
-
 async function verifyAndEnrich(candidate, countryName, ct = null) {
-  const { name, fbUrl, igUrl, industryHint } = candidate;
+  const { name, fbUrl, igUrl, industryHint, confidence } = candidate;
+  let searchText = '';
 
-  // 3 parallel targeted searches:
-  //  1. site:facebook.com  → finds the exact Facebook page URL
-  //  2. site:instagram.com → finds the exact Instagram handle + follower count in snippet
-  //  3. general (no social) → detects if business has its own website
-  const [fbText, igText, generalText] = await Promise.all([
-    fbUrl?.startsWith('http')
-      ? Promise.resolve('')
-      : webSearch(`site:facebook.com "${name}" ${countryName}`, ct).catch(() => ''),
-    igUrl?.startsWith('http')
-      ? Promise.resolve('')
-      : webSearch(`site:instagram.com "${name}" ${countryName}`, ct).catch(() => ''),
-    webSearch(
-      `"${name}" ${countryName} -site:facebook.com -site:instagram.com -site:yellowpages -site:yelp -site:tripadvisor`,
+  if (!fbUrl && !igUrl || confidence !== 'high') {
+    searchText = await webSearch(
+      `"${name}" ${countryName} facebook instagram -site:yellowpages -site:yelp -site:tripadvisor`,
       ct
-    ).catch(() => ''),
-  ]);
-
-  const allText = [fbUrl || '', igUrl || '', fbText, igText, generalText].join('\n');
-
-  // Pre-extract real social URLs — regex is deterministic, Haiku cannot hallucinate these
-  const extracted = extractSocialUrls(allText);
-  if (fbUrl?.startsWith('http')) extracted.facebook.unshift(fbUrl);
-  if (igUrl?.startsWith('http')) extracted.instagram.unshift(igUrl);
-  const fbOptions = [...new Set(extracted.facebook)].slice(0, 4);
-  const igOptions = [...new Set(extracted.instagram)].slice(0, 4);
-
-  // Detect own (non-social) website in general search results
-  const SOCIAL_DOMAINS = ['facebook','instagram','twitter','tiktok','youtube','linkedin',
-                           'google','wa.me','whatsapp','yelp','tripadvisor','yellowpages',
-                           'foursquare','zomato','booking','trustpilot'];
-  const nonSocialDomains = [...generalText.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)]
-    .map(m => m[1].toLowerCase())
-    .filter(d => !SOCIAL_DOMAINS.some(s => d.includes(s)));
-  const ownSite = nonSocialDomains[0] || null;
+    ).catch(() => '');
+  }
 
   const raw = await claudeHaiku(
-    'Business verifier. Output ONLY a valid JSON object, no other text.',
-    `Verify "${name}" in ${countryName} as a social-media-only micro/small business.
+    'Business verifier. Return ONLY valid JSON. Never fabricate URLs.',
+    `Verify and profile this potential social-media-only SME.
+
+Name: "${name}" in ${countryName}
 Industry hint: ${industryHint || 'unknown'}
+Discovered URLs: facebook="${fbUrl || 'none'}" instagram="${igUrl || 'none'}"
+Search results: ${searchText.slice(0, 4000) || '(using discovery URLs)'}
 
-OWN WEBSITE CHECK: ${ownSite ? `non-social domain found: ${ownSite}` : 'none detected in search'}
-→ If this is the business's OWN site (not a news/directory page mentioning them): rejected=true
+Rules:
+1. If it has its own website (not fb/ig) → rejected=true, rejectionReason="has website"
+2. If no confirmed FB or IG URL → rejected=true, rejectionReason="no confirmed social URL"
+3. Only use URLs actually seen — in discovery URLs above OR in search results. NEVER construct URLs.
 
-SOCIAL MEDIA URLS — pre-extracted from search results (use ONLY these exact strings, never modify):
-  Facebook options: ${fbOptions.length ? fbOptions.join(' | ') : 'none found'}
-  Instagram options: ${igOptions.length ? igOptions.join(' | ') : 'none found'}
-→ Pick the URL that best matches "${name}", or null if none clearly match this business.
-→ If neither Facebook nor Instagram URL matches: rejected=true, rejectionReason="no confirmed social URL"
-
-FOLLOWER COUNTS — scan for "X.XK followers", "X,XXX followers" patterns. Convert K to thousands. Use 0 if not found.
-Search text: ${(fbText + '\n' + igText).slice(0, 1500)}
-
-Return ONLY this JSON object (nothing before or after the braces):
+Return ONLY this JSON:
 {
   "rejected": false,
   "rejectionReason": null,
@@ -649,17 +518,17 @@ Return ONLY this JSON object (nothing before or after the braces):
   "employeeCount": "1-5",
   "monthlyRevenue": "$500-$2000",
   "socialMedia": {
-    "facebook": "exact url from Facebook options above or null",
-    "instagram": "exact url from Instagram options above or null",
-    "whatsapp": null
+    "facebook": "EXACT url from discovery or search or null — NO invention",
+    "instagram": "EXACT url from discovery or search or null — NO invention",
+    "whatsapp": "real phone if found or null"
   },
   "contactEmail": null,
   "ownerName": "real name if found or realistic local name",
-  "followers": {"facebook": 0, "instagram": 0},
+  "followers": {"facebook": 1000, "instagram": 600},
   "products": ["product1", "product2", "product3"],
   "priceRange": "$X-$Y",
   "tags": ["tag1", "tag2", "tag3"],
-  "noWebsiteReason": "Uses social media DMs for all orders",
+  "noWebsiteReason": "Runs everything through Instagram DMs",
   "opportunityScore": 75,
   "languages": ["local language", "English"],
   "isIllustrative": false
@@ -667,30 +536,16 @@ Return ONLY this JSON object (nothing before or after the braces):
     2000, ct
   );
 
-  // Robust JSON extraction — handles any extra text Haiku adds before/after the object
-  let profile;
-  try {
-    const s = raw.indexOf('{');
-    const e = raw.lastIndexOf('}');
-    if (s === -1 || e === -1) throw new Error('no JSON object found');
-    profile = JSON.parse(raw.slice(s, e + 1));
-  } catch (err) {
-    return { skipped: true, reason: `"${name}" — parse error: ${err.message.slice(0, 60)}` };
-  }
+  const profile = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
 
   if (profile.rejected) return { skipped: true, reason: `"${name}" — ${profile.rejectionReason}` };
 
-  // Code-level safety net: if Haiku returned a URL not in our extracted list, replace with
-  // the first real extracted URL (blocks hallucinated slugs from slipping through)
-  const validFb = new Set(fbOptions.map(u => u.toLowerCase()));
-  const validIg = new Set(igOptions.map(u => u.toLowerCase()));
-  if (profile.socialMedia?.facebook && !validFb.has(profile.socialMedia.facebook.toLowerCase()))
-    profile.socialMedia.facebook = fbOptions[0] || null;
-  if (profile.socialMedia?.instagram && !validIg.has(profile.socialMedia.instagram.toLowerCase()))
-    profile.socialMedia.instagram = igOptions[0] || null;
+  // Hard-lock verified discovery URLs
+  if (fbUrl?.startsWith('http')) profile.socialMedia.facebook = fbUrl;
+  if (igUrl?.startsWith('http')) profile.socialMedia.instagram = igUrl;
 
   if (!profile.socialMedia?.facebook && !profile.socialMedia?.instagram)
-    return { skipped: true, reason: `"${name}" — no confirmed social URL` };
+    return { skipped: true, reason: `"${name}" — no verified social URL` };
 
   return { skipped: false, profile };
 }
@@ -1305,12 +1160,7 @@ app.post('/api/countries/:id/search-smes', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM countries WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Country not found' });
   res.json({ ok: true });
-  const filters = {
-    industries:   Array.isArray(req.body?.industries)   ? req.body.industries   : [],
-    minFollowers: req.body?.minFollowers != null         ? Number(req.body.minFollowers) : null,
-    maxFollowers: req.body?.maxFollowers != null         ? Number(req.body.maxFollowers) : null,
-  };
-  runSearchPipeline(req.params.id, rows[0].name, filters).catch(err => {
+  runSearchPipeline(req.params.id, rows[0].name).catch(err => {
     console.error('Pipeline error:', err);
     sse(req.params.id, 'error', { message: err.message });
   });
@@ -1695,6 +1545,9 @@ app.get('/api/smes/:id/email', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── SPA fallback (must be after all API routes) ──────────────────────────────
+app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
+
 // ── Cost tracking endpoints ──────────────────────────────────────────────────
 
 app.get('/api/costs', async (req, res) => {
@@ -1773,9 +1626,6 @@ app.get('/api/costs/summary', async (req, res) => {
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-// ─── SPA fallback (must be after all API routes) ──────────────────────────────
-app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
 
 // Boot
 const PORT = process.env.PORT || 3001;
