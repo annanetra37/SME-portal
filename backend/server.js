@@ -306,13 +306,17 @@ async function insertSme(countryId, s) {
 // SEARCH PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function runSearchPipeline(countryId, countryName) {
+async function runSearchPipeline(countryId, countryName, filters = {}) {
   const TARGET = 15;
   const PARALLEL = 5;
   const TIMEOUT = 4 * 60 * 1000;
   const start = Date.now();
   const inserted = [];
   const ct = newCost();
+
+  const { industries = [], minFollowers = null, maxFollowers = null } = filters;
+  const hasIndustryFilter = industries.length > 0;
+  const hasFollowerFilter = minFollowers != null || maxFollowers != null;
 
   // ── FIX #2: Load existing names from DB to avoid duplicates ──────────────
   const { rows: existing } = await pool.query(
@@ -321,16 +325,48 @@ async function runSearchPipeline(countryId, countryName) {
   const existingNames = new Set(existing.map(r => r.name));
   log(countryId, `Found ${existingNames.size} existing businesses in DB — will skip duplicates`, 'info');
 
+  if (hasIndustryFilter) log(countryId, `Industry filter: ${industries.join(', ')}`, 'info');
+  if (hasFollowerFilter) log(countryId, `Follower range: ${minFollowers ?? '0'}–${maxFollowers ?? '∞'}`, 'info');
+
   // ── Phase 1: Parallel discovery ──────────────────────────────────────────
   log(countryId, `PHASE 1 — Parallel discovery for "${countryName}"`, 'phase');
-  const queries = [
-    `site:facebook.com "${countryName}" small business shop page handmade`,
-    `site:instagram.com "${countryName}" small business shop seller local`,
-    `"${countryName}" handmade food shop "facebook.com" OR "instagram.com" no website`,
-    `"${countryName}" small business "no website" OR "order via DM" instagram facebook 2024`,
-    `"${countryName}" homemade artisan crafts clothing beauty jewelry local seller social media`,
-    `"${countryName}" local food producer baker fashion boutique facebook instagram profile`,
-  ];
+
+  // Build industry-targeted queries if industries are selected
+  let queries;
+  if (hasIndustryFilter) {
+    const industryTermsMap = {
+      'Food & Beverage':    'food bakery restaurant catering homemade meals snacks',
+      'Fashion & Clothing': 'fashion clothing boutique apparel tailor dress',
+      'Beauty & Cosmetics': 'beauty cosmetics skincare makeup hair salon spa',
+      'Crafts & Handmade':  'handmade crafts artisan DIY handcraft custom',
+      'Jewelry':            'jewelry jewellery accessories rings necklace',
+      'Home Goods':         'home goods furniture decor interior household',
+      'Agriculture':        'agriculture farm organic produce vegetables fruits',
+      'Education':          'tutoring training courses education skills',
+      'Services':           'services repair cleaning delivery laundry fixing',
+      'Other':              'small business shop seller local entrepreneur',
+    };
+    queries = [];
+    for (const ind of industries) {
+      const terms = industryTermsMap[ind] || ind.toLowerCase();
+      queries.push(
+        `site:facebook.com "${countryName}" ${terms} page small business`,
+        `site:instagram.com "${countryName}" ${terms} seller shop`,
+        `"${countryName}" ${terms} "facebook.com" OR "instagram.com" no website`,
+      );
+    }
+    // Cap at 9 queries to avoid excessive cost
+    queries = queries.slice(0, 9);
+  } else {
+    queries = [
+      `site:facebook.com "${countryName}" small business shop page handmade`,
+      `site:instagram.com "${countryName}" small business shop seller local`,
+      `"${countryName}" handmade food shop "facebook.com" OR "instagram.com" no website`,
+      `"${countryName}" small business "no website" OR "order via DM" instagram facebook 2024`,
+      `"${countryName}" homemade artisan crafts clothing beauty jewelry local seller social media`,
+      `"${countryName}" local food producer baker fashion boutique facebook instagram profile`,
+    ];
+  }
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
   const results = await Promise.allSettled(queries.map(q => webSearch(q, ct)));
@@ -340,6 +376,9 @@ async function runSearchPipeline(countryId, countryName) {
     .slice(0, 22000);
 
   log(countryId, 'Extracting candidate businesses from search results...');
+  const industryInstruction = hasIndustryFilter
+    ? `- ONLY include businesses in these industries: ${industries.join(', ')}`
+    : '- Include any micro/small business industry';
   const extractRaw = await claudeHaiku(
     'Return ONLY valid JSON arrays, no markdown.',
     `From these web search results about ${countryName}, extract every distinct small business that appears to operate on Facebook or Instagram WITHOUT its own website.
@@ -352,6 +391,7 @@ Rules:
 - Look for facebook.com/PageName or instagram.com/handle patterns
 - Skip large chains, government orgs, NGOs
 - Do NOT invent names
+${industryInstruction}
 
 Return JSON (max 30):
 [{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/beauty/etc","confidence":"high/medium/low"}]
@@ -427,6 +467,19 @@ If nothing, return [].`, 2000, ct);
       if (skipped) {
         log(countryId, `  SKIP: ${reason}`, 'skip');
         continue;
+      }
+
+      // Follower filter
+      if (hasFollowerFilter) {
+        const totalFollowers = (profile.followers?.facebook || 0) + (profile.followers?.instagram || 0);
+        if (minFollowers != null && totalFollowers < minFollowers) {
+          log(countryId, `  SKIP "${profile.name}" — followers ${totalFollowers} < min ${minFollowers}`, 'skip');
+          continue;
+        }
+        if (maxFollowers != null && totalFollowers > maxFollowers) {
+          log(countryId, `  SKIP "${profile.name}" — followers ${totalFollowers} > max ${maxFollowers}`, 'skip');
+          continue;
+        }
       }
 
       // Double-check deduplication at insert time
@@ -1160,7 +1213,12 @@ app.post('/api/countries/:id/search-smes', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM countries WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Country not found' });
   res.json({ ok: true });
-  runSearchPipeline(req.params.id, rows[0].name).catch(err => {
+  const filters = {
+    industries:   Array.isArray(req.body?.industries)   ? req.body.industries   : [],
+    minFollowers: req.body?.minFollowers != null         ? Number(req.body.minFollowers) : null,
+    maxFollowers: req.body?.maxFollowers != null         ? Number(req.body.maxFollowers) : null,
+  };
+  runSearchPipeline(req.params.id, rows[0].name, filters).catch(err => {
     console.error('Pipeline error:', err);
     sse(req.params.id, 'error', { message: err.message });
   });
@@ -1545,9 +1603,6 @@ app.get('/api/smes/:id/email', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── SPA fallback (must be after all API routes) ──────────────────────────────
-app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
-
 // ── Cost tracking endpoints ──────────────────────────────────────────────────
 
 app.get('/api/costs', async (req, res) => {
@@ -1626,6 +1681,9 @@ app.get('/api/costs/summary', async (req, res) => {
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ─── SPA fallback (must be after all API routes) ──────────────────────────────
+app.get('*', (_, res) => res.sendFile(path.join(frontendPath, 'index.html')));
 
 // Boot
 const PORT = process.env.PORT || 3001;
