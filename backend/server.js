@@ -306,13 +306,17 @@ async function insertSme(countryId, s) {
 // SEARCH PIPELINE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function runSearchPipeline(countryId, countryName) {
+async function runSearchPipeline(countryId, countryName, filters = {}) {
   const TARGET = 15;
   const PARALLEL = 5;
   const TIMEOUT = 4 * 60 * 1000;
   const start = Date.now();
   const inserted = [];
   const ct = newCost();
+
+  const { industries = [], minFollowers = null, maxFollowers = null } = filters;
+  const hasIndustryFilter = industries.length > 0;
+  const hasFollowerFilter = minFollowers != null || maxFollowers != null;
 
   // ── FIX #2: Load existing names from DB to avoid duplicates ──────────────
   const { rows: existing } = await pool.query(
@@ -321,17 +325,39 @@ async function runSearchPipeline(countryId, countryName) {
   const existingNames = new Set(existing.map(r => r.name));
   log(countryId, `Found ${existingNames.size} existing businesses in DB — will skip duplicates`, 'info');
 
+  if (hasIndustryFilter) log(countryId, `Industry filter: ${industries.join(', ')}`, 'info');
+  if (hasFollowerFilter) log(countryId, `Follower range: ${minFollowers ?? '0'}–${maxFollowers ?? '∞'}`, 'info');
+
   // ── Phase 1: Parallel discovery ──────────────────────────────────────────
   log(countryId, `PHASE 1 — Parallel discovery for "${countryName}"`, 'phase');
+
+  // When an industry filter is active, add those terms as query bias (not hard requirements).
+  // The broad query structure is kept so results still come back for smaller markets.
+  const industryTermsMap = {
+    'Food & Beverage':    'food bakery restaurant homemade meals snacks',
+    'Fashion & Clothing': 'fashion clothing boutique apparel tailor',
+    'Beauty & Cosmetics': 'beauty cosmetics skincare makeup hair salon',
+    'Crafts & Handmade':  'handmade crafts artisan pottery knitting',
+    'Jewelry':            'jewelry jewellery accessories rings necklace',
+    'Home Goods':         'home goods furniture decor interior household',
+    'Agriculture':        'agriculture farm organic produce vegetables',
+    'Education':          'tutoring training courses education skills',
+    'Services':           'services repair cleaning delivery laundry',
+    'Other':              '',
+  };
+  const industryClause = hasIndustryFilter
+    ? ' ' + industries.map(ind => industryTermsMap[ind] || ind.toLowerCase()).join(' ')
+    : '';
+
   const queries = [
-    `site:facebook.com "${countryName}" small business shop`,
-    `site:instagram.com "${countryName}" shop seller handmade`,
-    `"${countryName}" small business facebook instagram shop seller`,
-    `"${countryName}" homemade artisan crafts clothing beauty jewelry local seller`,
-    `"${countryName}" local food producer baker fashion boutique facebook instagram`,
-    `"${countryName}" entrepreneur micro business social media instagram`,
-    `"${countryName}" local artisan handmade seller online shop`,
-    `"${countryName}" small business local market seller buy online`,
+    `site:facebook.com "${countryName}"${industryClause} small business shop`,
+    `site:instagram.com "${countryName}"${industryClause} shop seller handmade`,
+    `"${countryName}"${industryClause} small business facebook instagram shop seller`,
+    `"${countryName}"${industryClause} homemade artisan crafts clothing beauty jewelry local seller`,
+    `"${countryName}"${industryClause} local food producer baker fashion boutique facebook instagram`,
+    `"${countryName}"${industryClause} entrepreneur micro business social media instagram`,
+    `"${countryName}"${industryClause} local artisan handmade seller online shop`,
+    `"${countryName}"${industryClause} small business local market seller buy online`,
   ];
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
@@ -367,6 +393,31 @@ If nothing, return [].`,
   if (!Array.isArray(candidates)) candidates = [];
 
   log(countryId, `Found ${candidates.length} candidates`, candidates.length > 0 ? 'ok' : 'warn');
+
+  // ── Industry post-filter: reliable keyword match on industryHint ──────────
+  if (hasIndustryFilter && candidates.length > 0) {
+    const industryKeywords = {
+      'Food & Beverage':    ['food', 'beverage', 'bakery', 'restaurant', 'cater', 'snack', 'meal', 'drink', 'coffee', 'cook'],
+      'Fashion & Clothing': ['fashion', 'cloth', 'apparel', 'boutique', 'tailor', 'dress', 'wear', 'textile'],
+      'Beauty & Cosmetics': ['beauty', 'cosmetic', 'skincare', 'makeup', 'hair', 'salon', 'spa', 'nail', 'skin'],
+      'Crafts & Handmade':  ['craft', 'handmade', 'artisan', 'diy', 'custom', 'pottery', 'knit', 'sew'],
+      'Jewelry':            ['jewelry', 'jewellery', 'accessori', 'ring', 'necklace', 'gem', 'bead', 'bracelet'],
+      'Home Goods':         ['home', 'furniture', 'decor', 'interior', 'household', 'kitchenware', 'candle'],
+      'Agriculture':        ['agricultur', 'farm', 'organic', 'produce', 'vegetable', 'fruit', 'crop'],
+      'Education':          ['educat', 'tutor', 'training', 'course', 'school', 'learn', 'teach'],
+      'Services':           ['service', 'repair', 'clean', 'delivery', 'laundry', 'fix', 'plumb'],
+      'Other':              [],
+    };
+    const activeKeywords = industries.flatMap(ind => industryKeywords[ind] || [ind.toLowerCase()]);
+    const before = candidates.length;
+    candidates = candidates.filter(c => {
+      if (!c.industryHint) return true; // keep unclassified — let verifyAndEnrich classify
+      const hint = c.industryHint.toLowerCase();
+      return activeKeywords.some(kw => hint.includes(kw));
+    });
+    if (before > candidates.length)
+      log(countryId, `Industry filter: removed ${before - candidates.length} off-industry candidates (kept ${candidates.length})`, 'info');
+  }
 
   // Fallback broader search
   if (candidates.length < 5) {
@@ -434,6 +485,24 @@ If nothing, return [].`, 2000, ct);
         continue;
       }
 
+      // Follower filter — 0 means count not found in search text (unknown), not confirmed zero.
+      // Only reject if we have an actual confirmed non-zero count outside the range.
+      if (hasFollowerFilter) {
+        const totalFollowers = (profile.followers?.facebook || 0) + (profile.followers?.instagram || 0);
+        if (totalFollowers === 0) {
+          log(countryId, `  "${profile.name}" — follower count unknown, keeping`, 'info');
+        } else {
+          if (minFollowers != null && totalFollowers < minFollowers) {
+            log(countryId, `  SKIP "${profile.name}" — ${totalFollowers.toLocaleString()} followers < min ${minFollowers.toLocaleString()}`, 'skip');
+            continue;
+          }
+          if (maxFollowers != null && totalFollowers > maxFollowers) {
+            log(countryId, `  SKIP "${profile.name}" — ${totalFollowers.toLocaleString()} followers > max ${maxFollowers.toLocaleString()}`, 'skip');
+            continue;
+          }
+        }
+      }
+
       // Double-check deduplication at insert time
       const nameKey = profile.name.toLowerCase().trim();
       if (existingNames.has(nameKey)) {
@@ -454,20 +523,25 @@ If nothing, return [].`, 2000, ct);
     }
   }
 
-  // Fallback illustrative profiles
+  // Fallback illustrative profiles — only when no filters are active.
+  // With filters, show no results rather than off-criteria invented profiles.
   if (inserted.length === 0) {
-    log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
-    const profiles = await generateIllustrative(countryName, ct);
-    for (const p of profiles) {
-      const key = p.name.toLowerCase().trim();
-      if (existingNames.has(key)) continue;
-      existingNames.add(key);
-      try {
-        const saved = await insertSme(countryId, p);
-        inserted.push(saved);
-        sse(countryId, 'sme', saved);
-        log(countryId, `  Illustrative: "${p.name}"`, 'sme');
-      } catch {}
+    if (hasIndustryFilter || hasFollowerFilter) {
+      log(countryId, 'No businesses found matching your filters — try broader criteria or remove filters', 'warn');
+    } else {
+      log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
+      const profiles = await generateIllustrative(countryName, ct);
+      for (const p of profiles) {
+        const key = p.name.toLowerCase().trim();
+        if (existingNames.has(key)) continue;
+        existingNames.add(key);
+        try {
+          const saved = await insertSme(countryId, p);
+          inserted.push(saved);
+          sse(countryId, 'sme', saved);
+          log(countryId, `  Illustrative: "${p.name}"`, 'sme');
+        } catch {}
+      }
     }
   }
 
@@ -1165,7 +1239,12 @@ app.post('/api/countries/:id/search-smes', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM countries WHERE id=$1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Country not found' });
   res.json({ ok: true });
-  runSearchPipeline(req.params.id, rows[0].name).catch(err => {
+  const filters = {
+    industries:   Array.isArray(req.body?.industries)   ? req.body.industries   : [],
+    minFollowers: req.body?.minFollowers != null         ? Number(req.body.minFollowers) : null,
+    maxFollowers: req.body?.maxFollowers != null         ? Number(req.body.maxFollowers) : null,
+  };
+  runSearchPipeline(req.params.id, rows[0].name, filters).catch(err => {
     console.error('Pipeline error:', err);
     sse(req.params.id, 'error', { message: err.message });
   });
