@@ -218,23 +218,23 @@ async function claudeHaiku(system, user, maxTokens = 2000, ct = null) {
   return r.content[0].text;
 }
 
-/** Web search via Haiku — cost-optimised (Haiku supports web_search_20250305) */
+/** Web search via Sonnet — produces detailed results with specific business names and URLs */
 async function webSearch(query, ct = null) {
   if (ct) ct.searches += 1;
   const r = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 4000,
+    model: 'claude-sonnet-4-6', max_tokens: 6000,
     tools: [{ type: 'web_search_20250305', name: 'web_search' }],
     messages: [{ role: 'user', content: query }],
   });
   if (ct && r.usage) {
-    ct.haikuInput  = (ct.haikuInput  || 0) + (r.usage.input_tokens  || 0);
-    ct.haikuOutput = (ct.haikuOutput || 0) + (r.usage.output_tokens || 0);
+    ct.inputTokens  = (ct.inputTokens  || 0) + (r.usage.input_tokens  || 0);
+    ct.outputTokens = (ct.outputTokens || 0) + (r.usage.output_tokens || 0);
   }
   if (r.stop_reason === 'tool_use') {
     const toolResults = r.content.filter(b => b.type === 'tool_use')
       .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'results retrieved' }));
     const r2 = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001', max_tokens: 4000,
+      model: 'claude-sonnet-4-6', max_tokens: 6000,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages: [
         { role: 'user', content: query },
@@ -243,8 +243,8 @@ async function webSearch(query, ct = null) {
       ],
     });
     if (ct && r2.usage) {
-      ct.haikuInput  = (ct.haikuInput  || 0) + (r2.usage.input_tokens  || 0);
-      ct.haikuOutput = (ct.haikuOutput || 0) + (r2.usage.output_tokens || 0);
+      ct.inputTokens  = (ct.inputTokens  || 0) + (r2.usage.input_tokens  || 0);
+      ct.outputTokens = (ct.outputTokens || 0) + (r2.usage.output_tokens || 0);
     }
     return r2.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   }
@@ -349,15 +349,15 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
     ? ' ' + industries.map(ind => industryTermsMap[ind] || ind.toLowerCase()).join(' ')
     : '';
 
+  // Original proven queries — the "no website" / "order via DM" framing is what surfaces
+  // social-media-only SMEs. Industry clause adds bias terms when filter is active.
   const queries = [
-    `site:facebook.com "${countryName}"${industryClause} small business shop`,
-    `site:instagram.com "${countryName}"${industryClause} shop seller handmade`,
-    `"${countryName}"${industryClause} small business facebook instagram shop seller`,
-    `"${countryName}"${industryClause} homemade artisan crafts clothing beauty jewelry local seller`,
-    `"${countryName}"${industryClause} local food producer baker fashion boutique facebook instagram`,
-    `"${countryName}"${industryClause} entrepreneur micro business social media instagram`,
-    `"${countryName}"${industryClause} local artisan handmade seller online shop`,
-    `"${countryName}"${industryClause} small business local market seller buy online`,
+    `site:facebook.com "${countryName}"${industryClause} small business shop page handmade`,
+    `site:instagram.com "${countryName}"${industryClause} small business shop seller local`,
+    `"${countryName}"${industryClause} handmade food shop "facebook.com" OR "instagram.com" no website`,
+    `"${countryName}"${industryClause} small business "no website" OR "order via DM" instagram facebook`,
+    `"${countryName}"${industryClause} homemade artisan crafts clothing beauty jewelry local seller social media`,
+    `"${countryName}"${industryClause} local food producer baker fashion boutique facebook instagram profile`,
   ];
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
@@ -523,39 +523,23 @@ If nothing, return [].`, 2000, ct);
     }
   }
 
-  // Fallback illustrative profiles — only when no filters are active.
-  // With filters, show no results rather than off-criteria invented profiles.
   if (inserted.length === 0) {
     if (hasIndustryFilter || hasFollowerFilter) {
       log(countryId, 'No businesses found matching your filters — try broader criteria or remove filters', 'warn');
     } else {
-      log(countryId, 'No businesses verified — generating illustrative profiles as fallback', 'warn');
-      const profiles = await generateIllustrative(countryName, ct);
-      for (const p of profiles) {
-        const key = p.name.toLowerCase().trim();
-        if (existingNames.has(key)) continue;
-        existingNames.add(key);
-        try {
-          const saved = await insertSme(countryId, p);
-          inserted.push(saved);
-          sse(countryId, 'sme', saved);
-          log(countryId, `  Illustrative: "${p.name}"`, 'sme');
-        } catch {}
-      }
+      log(countryId, 'No verified businesses found — search returned no confirmed social media SMEs', 'warn');
     }
   }
 
-  const verified = inserted.filter(s => !s.isIllustrative).length;
-  const illus = inserted.filter(s => s.isIllustrative).length;
+  const verified = inserted.length;
   const elapsed = Math.round((Date.now() - start) / 1000);
 
   const cost = await saveCost(ct, 'sme_discovery', { countryId, countryName });
   log(countryId, `━━━ COMPLETE in ${elapsed}s ━━━`, 'phase');
   if (verified > 0) log(countryId, `${verified} verified real businesses added`, 'ok');
-  if (illus > 0)    log(countryId, `${illus} illustrative profiles added`, 'warn');
-  log(countryId, `💰 AI cost: ${cost.display}  (Sonnet: ${cost.inputTokens.toLocaleString()}/${cost.outputTokens.toLocaleString()} tok · Haiku: ${cost.haikuInput.toLocaleString()}/${cost.haikuOutput.toLocaleString()} tok · ${cost.searches} searches)`, 'cost');
+  log(countryId, `💰 AI cost: ${cost.display}  (Sonnet: ${cost.inputTokens.toLocaleString()}/${cost.outputTokens.toLocaleString()} tok · ${cost.searches} searches)`, 'cost');
 
-  sse(countryId, 'done', { total: inserted.length, verified, illustrative: illus, elapsedSeconds: elapsed, cost });
+  sse(countryId, 'done', { total: inserted.length, verified, illustrative: 0, elapsedSeconds: elapsed, cost });
   return inserted;
 }
 
@@ -570,7 +554,7 @@ async function verifyAndEnrich(candidate, countryName, ct = null) {
     ).catch(() => '');
   }
 
-  const raw = await claudeHaiku(
+  const raw = await claude(
     'Business verifier. Return ONLY valid JSON. Never fabricate URLs.',
     `Verify and profile this potential social-media-only SME.
 
