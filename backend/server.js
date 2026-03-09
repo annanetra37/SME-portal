@@ -557,43 +557,81 @@ If nothing, return [].`, 2000, ct);
   return inserted;
 }
 
-async function verifyAndEnrich(candidate, countryName, ct = null) {
-  const { name, fbUrl, igUrl, industryHint, confidence } = candidate;
-  let searchText = '';
+// ── Deterministically extract social media URLs from text (no AI hallucination) ──
+function extractSocialUrls(text) {
+  const clean = u => u.replace(/[,)"'\]>\s]+$/, '').split('?')[0].split('#')[0];
+  const SKIP_FB = new Set(['sharer','share','photo','watch','events','groups','hashtag',
+                            'stories','plugins','dialog','login','help','pages','business']);
+  const SKIP_IG = new Set(['p','reel','explore','stories','tv','reels','accounts']);
+  const fb = [...new Set(
+    [...text.matchAll(/https?:\/\/(?:www\.)?facebook\.com\/([a-zA-Z0-9._\-]{2,})/g)]
+      .filter(m => !SKIP_FB.has(m[1].toLowerCase().split('/')[0]))
+      .map(m => clean('https://www.facebook.com/' + m[1]))
+  )];
+  const ig = [...new Set(
+    [...text.matchAll(/https?:\/\/(?:www\.)?instagram\.com\/([a-zA-Z0-9._]{2,})/g)]
+      .filter(m => !SKIP_IG.has(m[1].toLowerCase().split('/')[0]))
+      .map(m => clean('https://www.instagram.com/' + m[1]))
+  )];
+  return { facebook: fb, instagram: ig };
+}
 
-  if (!fbUrl && !igUrl || confidence !== 'high') {
-    searchText = await webSearch(
-      `"${name}" ${countryName} facebook instagram -site:yellowpages -site:yelp -site:tripadvisor`,
+async function verifyAndEnrich(candidate, countryName, ct = null) {
+  const { name, fbUrl, igUrl, industryHint } = candidate;
+
+  // 3 parallel targeted searches:
+  //  1. site:facebook.com  → finds the exact Facebook page URL
+  //  2. site:instagram.com → finds the exact Instagram handle + follower count in snippet
+  //  3. general (no social) → detects if business has its own website
+  const [fbText, igText, generalText] = await Promise.all([
+    fbUrl?.startsWith('http')
+      ? Promise.resolve('')
+      : webSearch(`site:facebook.com "${name}" ${countryName}`, ct).catch(() => ''),
+    igUrl?.startsWith('http')
+      ? Promise.resolve('')
+      : webSearch(`site:instagram.com "${name}" ${countryName}`, ct).catch(() => ''),
+    webSearch(
+      `"${name}" ${countryName} -site:facebook.com -site:instagram.com -site:yellowpages -site:yelp -site:tripadvisor`,
       ct
-    ).catch(() => '');
-  }
+    ).catch(() => ''),
+  ]);
+
+  const allText = [fbUrl || '', igUrl || '', fbText, igText, generalText].join('\n');
+
+  // Pre-extract real social URLs — regex is deterministic, Haiku cannot hallucinate these
+  const extracted = extractSocialUrls(allText);
+  if (fbUrl?.startsWith('http')) extracted.facebook.unshift(fbUrl);
+  if (igUrl?.startsWith('http')) extracted.instagram.unshift(igUrl);
+  const fbOptions = [...new Set(extracted.facebook)].slice(0, 4);
+  const igOptions = [...new Set(extracted.instagram)].slice(0, 4);
+
+  // Detect own (non-social) website in general search results
+  const SOCIAL_DOMAINS = ['facebook','instagram','twitter','tiktok','youtube','linkedin',
+                           'google','wa.me','whatsapp','yelp','tripadvisor','yellowpages',
+                           'foursquare','zomato','booking','trustpilot'];
+  const nonSocialDomains = [...generalText.matchAll(/https?:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)]
+    .map(m => m[1].toLowerCase())
+    .filter(d => !SOCIAL_DOMAINS.some(s => d.includes(s)));
+  const ownSite = nonSocialDomains[0] || null;
 
   const raw = await claudeHaiku(
-    'Business verifier. Return ONLY valid JSON. Never fabricate URLs.',
-    `Verify and profile this potential social-media-only SME.
-
-Name: "${name}" in ${countryName}
+    'Business verifier. Output ONLY a valid JSON object, no other text.',
+    `Verify "${name}" in ${countryName} as a social-media-only micro/small business.
 Industry hint: ${industryHint || 'unknown'}
-Discovered URLs: facebook="${fbUrl || 'none'}" instagram="${igUrl || 'none'}"
-Search results: ${searchText.slice(0, 4000) || '(using discovery URLs)'}
 
-WEBSITE CHECK — read the search results carefully and look for any URL that:
-  - belongs to this specific business
-  - is NOT facebook.com, instagram.com, twitter.com, tiktok.com, youtube.com, linkedin.com, wa.me, whatsapp
-  - is NOT a directory/review site (yellowpages, yelp, tripadvisor, google maps, zomato, foursquare)
-  If you find such a URL (e.g. nuarjewelry.com, armeniashop.am, mybrand.store) → rejected=true.
+OWN WEBSITE CHECK: ${ownSite ? `non-social domain found: ${ownSite}` : 'none detected in search'}
+→ If this is the business's OWN site (not a news/directory page mentioning them): rejected=true
 
-Rules:
-1. If business has its own non-social website → rejected=true, rejectionReason="has website: [domain]"
-2. If no confirmed FB or IG URL can be found → rejected=true, rejectionReason="no confirmed social URL"
-3. Only use URLs actually seen in discovery URLs or search results. NEVER construct or guess URLs.
+SOCIAL MEDIA URLS — pre-extracted from search results (use ONLY these exact strings, never modify):
+  Facebook options: ${fbOptions.length ? fbOptions.join(' | ') : 'none found'}
+  Instagram options: ${igOptions.length ? igOptions.join(' | ') : 'none found'}
+→ Pick the URL that best matches "${name}", or null if none clearly match this business.
+→ If neither Facebook nor Instagram URL matches: rejected=true, rejectionReason="no confirmed social URL"
 
-FOLLOWER COUNTS — scan the search text for follower numbers. Look for patterns like:
-  "16.3K followers", "5,000 Followers", "1.2K فالوور", "12K подписчиков", etc.
-  Use the EXACT number found. Convert K to thousands (16.3K → 16300).
-  Set to 0 ONLY if no follower count appears anywhere in the search text.
+FOLLOWER COUNTS — scan for "X.XK followers", "X,XXX followers" patterns. Convert K to thousands. Use 0 if not found.
+Search text: ${(fbText + '\n' + igText).slice(0, 1500)}
 
-Return ONLY this JSON:
+Return ONLY this JSON object (nothing before or after the braces):
 {
   "rejected": false,
   "rejectionReason": null,
@@ -606,9 +644,9 @@ Return ONLY this JSON:
   "employeeCount": "1-5",
   "monthlyRevenue": "$500-$2000",
   "socialMedia": {
-    "facebook": "EXACT url from discovery or search or null — NO invention",
-    "instagram": "EXACT url from discovery or search or null — NO invention",
-    "whatsapp": "real phone if found or null"
+    "facebook": "exact url from Facebook options above or null",
+    "instagram": "exact url from Instagram options above or null",
+    "whatsapp": null
   },
   "contactEmail": null,
   "ownerName": "real name if found or realistic local name",
@@ -616,7 +654,7 @@ Return ONLY this JSON:
   "products": ["product1", "product2", "product3"],
   "priceRange": "$X-$Y",
   "tags": ["tag1", "tag2", "tag3"],
-  "noWebsiteReason": "Runs everything through Instagram DMs",
+  "noWebsiteReason": "Uses social media DMs for all orders",
   "opportunityScore": 75,
   "languages": ["local language", "English"],
   "isIllustrative": false
@@ -624,16 +662,30 @@ Return ONLY this JSON:
     2000, ct
   );
 
-  const profile = JSON.parse(raw.replace(/```json\n?|\n?```/g, '').trim());
+  // Robust JSON extraction — handles any extra text Haiku adds before/after the object
+  let profile;
+  try {
+    const s = raw.indexOf('{');
+    const e = raw.lastIndexOf('}');
+    if (s === -1 || e === -1) throw new Error('no JSON object found');
+    profile = JSON.parse(raw.slice(s, e + 1));
+  } catch (err) {
+    return { skipped: true, reason: `"${name}" — parse error: ${err.message.slice(0, 60)}` };
+  }
 
   if (profile.rejected) return { skipped: true, reason: `"${name}" — ${profile.rejectionReason}` };
 
-  // Hard-lock verified discovery URLs
-  if (fbUrl?.startsWith('http')) profile.socialMedia.facebook = fbUrl;
-  if (igUrl?.startsWith('http')) profile.socialMedia.instagram = igUrl;
+  // Code-level safety net: if Haiku returned a URL not in our extracted list, replace with
+  // the first real extracted URL (blocks hallucinated slugs from slipping through)
+  const validFb = new Set(fbOptions.map(u => u.toLowerCase()));
+  const validIg = new Set(igOptions.map(u => u.toLowerCase()));
+  if (profile.socialMedia?.facebook && !validFb.has(profile.socialMedia.facebook.toLowerCase()))
+    profile.socialMedia.facebook = fbOptions[0] || null;
+  if (profile.socialMedia?.instagram && !validIg.has(profile.socialMedia.instagram.toLowerCase()))
+    profile.socialMedia.instagram = igOptions[0] || null;
 
   if (!profile.socialMedia?.facebook && !profile.socialMedia?.instagram)
-    return { skipped: true, reason: `"${name}" — no verified social URL` };
+    return { skipped: true, reason: `"${name}" — no confirmed social URL` };
 
   return { skipped: false, profile };
 }
