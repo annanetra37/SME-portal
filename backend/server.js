@@ -331,42 +331,32 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
   // ── Phase 1: Parallel discovery ──────────────────────────────────────────
   log(countryId, `PHASE 1 — Parallel discovery for "${countryName}"`, 'phase');
 
-  // Build industry-targeted queries if industries are selected
-  let queries;
-  if (hasIndustryFilter) {
-    const industryTermsMap = {
-      'Food & Beverage':    'food bakery restaurant catering homemade meals snacks',
-      'Fashion & Clothing': 'fashion clothing boutique apparel tailor dress',
-      'Beauty & Cosmetics': 'beauty cosmetics skincare makeup hair salon spa',
-      'Crafts & Handmade':  'handmade crafts artisan DIY handcraft custom',
-      'Jewelry':            'jewelry jewellery accessories rings necklace',
-      'Home Goods':         'home goods furniture decor interior household',
-      'Agriculture':        'agriculture farm organic produce vegetables fruits',
-      'Education':          'tutoring training courses education skills',
-      'Services':           'services repair cleaning delivery laundry fixing',
-      'Other':              'small business shop seller local entrepreneur',
-    };
-    queries = [];
-    for (const ind of industries) {
-      const terms = industryTermsMap[ind] || ind.toLowerCase();
-      queries.push(
-        `site:facebook.com "${countryName}" ${terms} page small business`,
-        `site:instagram.com "${countryName}" ${terms} seller shop`,
-        `"${countryName}" ${terms} "facebook.com" OR "instagram.com" no website`,
-      );
-    }
-    // Cap at 9 queries to avoid excessive cost
-    queries = queries.slice(0, 9);
-  } else {
-    queries = [
-      `site:facebook.com "${countryName}" small business shop page handmade`,
-      `site:instagram.com "${countryName}" small business shop seller local`,
-      `"${countryName}" handmade food shop "facebook.com" OR "instagram.com" no website`,
-      `"${countryName}" small business "no website" OR "order via DM" instagram facebook 2024`,
-      `"${countryName}" homemade artisan crafts clothing beauty jewelry local seller social media`,
-      `"${countryName}" local food producer baker fashion boutique facebook instagram profile`,
-    ];
-  }
+  // Add industry terms to narrow searches — but KEEP the proven site:facebook.com /
+  // site:instagram.com query structure that reliably surfaces social media URLs.
+  const industryTermsMap = {
+    'Food & Beverage':    'food bakery restaurant catering homemade meals',
+    'Fashion & Clothing': 'fashion clothing boutique apparel tailor',
+    'Beauty & Cosmetics': 'beauty cosmetics skincare makeup hair salon',
+    'Crafts & Handmade':  'handmade crafts artisan DIY custom',
+    'Jewelry':            'jewelry jewellery accessories rings necklace',
+    'Home Goods':         'home goods furniture decor interior',
+    'Agriculture':        'agriculture farm organic produce',
+    'Education':          'education tutoring courses training',
+    'Services':           'services repair cleaning delivery laundry',
+    'Other':              '',
+  };
+  const industryClause = hasIndustryFilter
+    ? ' ' + industries.map(ind => industryTermsMap[ind] || ind.toLowerCase()).join(' ')
+    : '';
+
+  const queries = [
+    `site:facebook.com "${countryName}"${industryClause} small business shop page`,
+    `site:instagram.com "${countryName}"${industryClause} small business shop seller`,
+    `"${countryName}"${industryClause} "facebook.com" OR "instagram.com" no website`,
+    `"${countryName}"${industryClause} small business "no website" OR "order via DM" instagram facebook`,
+    `"${countryName}"${industryClause} local seller social media entrepreneur facebook instagram`,
+    `"${countryName}"${industryClause} local business facebook instagram profile`,
+  ];
   log(countryId, `Running ${queries.length} search queries in parallel...`);
 
   const results = await Promise.allSettled(queries.map(q => webSearch(q, ct)));
@@ -376,9 +366,6 @@ async function runSearchPipeline(countryId, countryName, filters = {}) {
     .slice(0, 22000);
 
   log(countryId, 'Extracting candidate businesses from search results...');
-  const industryInstruction = hasIndustryFilter
-    ? `- ONLY include businesses in these industries: ${industries.join(', ')}`
-    : '- Include any micro/small business industry';
   const extractRaw = await claudeHaiku(
     'Return ONLY valid JSON arrays, no markdown.',
     `From these web search results about ${countryName}, extract every distinct small business that appears to operate on Facebook or Instagram WITHOUT its own website.
@@ -388,13 +375,12 @@ ${combinedText}
 
 Rules:
 - Only include names actually in the text
-- Look for facebook.com/PageName or instagram.com/handle patterns
+- Look for facebook.com/PageName or instagram.com/handle patterns — capture the FULL URL
 - Skip large chains, government orgs, NGOs
-- Do NOT invent names
-${industryInstruction}
+- Do NOT invent names or URLs
 
 Return JSON (max 30):
-[{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/beauty/etc","confidence":"high/medium/low"}]
+[{"name":"name as found","fbUrl":"full fb url or null","igUrl":"full ig url or null","industryHint":"food/crafts/fashion/clothing/beauty/jewelry/home/agriculture/education/services/other","confidence":"high/medium/low"}]
 If nothing, return [].`,
     4000, ct
   );
@@ -404,6 +390,32 @@ If nothing, return [].`,
   if (!Array.isArray(candidates)) candidates = [];
 
   log(countryId, `Found ${candidates.length} candidates`, candidates.length > 0 ? 'ok' : 'warn');
+
+  // ── Industry post-filter: keyword match against industryHint (reliable, not AI instruction) ──
+  if (hasIndustryFilter && candidates.length > 0) {
+    const industryKeywords = {
+      'Food & Beverage':    ['food', 'beverage', 'bakery', 'restaurant', 'cater', 'snack', 'meal', 'drink', 'coffee', 'tea', 'cook'],
+      'Fashion & Clothing': ['fashion', 'cloth', 'apparel', 'boutique', 'tailor', 'dress', 'wear', 'textile', 'shirt', 'suit'],
+      'Beauty & Cosmetics': ['beauty', 'cosmetic', 'skincare', 'makeup', 'hair', 'salon', 'spa', 'nail', 'skin', 'perfume'],
+      'Crafts & Handmade':  ['craft', 'handmade', 'artisan', 'diy', 'custom', 'handcraft', 'pottery', 'knit', 'sew'],
+      'Jewelry':            ['jewelry', 'jewellery', 'accessori', 'ring', 'necklace', 'gem', 'bead', 'bracelet'],
+      'Home Goods':         ['home', 'furniture', 'decor', 'interior', 'household', 'kitchenware', 'candle'],
+      'Agriculture':        ['agricultur', 'farm', 'organic', 'produce', 'vegetable', 'fruit', 'crop', 'harvest'],
+      'Education':          ['educat', 'tutor', 'training', 'course', 'school', 'learn', 'teach', 'class'],
+      'Services':           ['service', 'repair', 'clean', 'delivery', 'laundry', 'fix', 'plumb', 'electric'],
+      'Other':              [],
+    };
+    const activeKeywords = industries.flatMap(ind => industryKeywords[ind] || [ind.toLowerCase()]);
+    const before = candidates.length;
+    candidates = candidates.filter(c => {
+      if (!c.industryHint) return true; // keep unclassified — verifyAndEnrich will decide
+      const hint = c.industryHint.toLowerCase();
+      return activeKeywords.some(kw => hint.includes(kw));
+    });
+    if (before > candidates.length) {
+      log(countryId, `Industry filter: removed ${before - candidates.length} off-industry candidates (kept ${candidates.length})`, 'info');
+    }
+  }
 
   // Fallback broader search
   if (candidates.length < 5) {
