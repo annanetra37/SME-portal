@@ -157,12 +157,6 @@
       background: #43e97b18; color: #43e97b;
       border: 1px solid #43e97b30; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
     }
-    .badge-illustrative {
-      font-size: 9px; padding: 2px 6px; border-radius: 99px;
-      background: #ff9f4318; color: #ff9f43;
-      border: 1px solid #ff9f4330; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
-    }
-
     @keyframes cardPop {
       from { opacity: 0; transform: translateY(20px) scale(0.96); }
       to   { opacity: 1; transform: translateY(0)   scale(1); }
@@ -196,20 +190,6 @@
     .log-line.skip   { color: #ff6b6b; }
     .log-line.warn   { color: var(--warning); }
 
-    .badge-illustrative {
-      font-size: 9px;
-      padding: 2px 7px;
-      border-radius: 99px;
-      background: #ff9f4320;
-      color: #ff9f43;
-      border: 1px solid #ff9f4340;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      margin-left: 6px;
-      vertical-align: middle;
-    }
-
     .verified-badge {
       display: inline-flex; align-items: center; gap: 4px;
       font-size: 10px;
@@ -236,6 +216,27 @@
       font-size: 12px;
       font-style: italic;
     }
+    /* ─── Edit Modal ──────────────────────────────────── */
+    #editModal { display:none; position:fixed; inset:0; z-index:1000; background:#00000080; align-items:center; justify-content:center; }
+    #editModal.open { display:flex; }
+    .edit-modal-box {
+      background:var(--surface); border:1px solid var(--border); border-radius:16px;
+      padding:28px 32px; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto;
+    }
+    .edit-modal-box h3 { margin:0 0 20px; font-size:17px; color:var(--text); }
+    .edit-field { margin-bottom:14px; }
+    .edit-field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; font-weight:600; text-transform:uppercase; letter-spacing:0.4px; }
+    .edit-field input, .edit-field select, .edit-field textarea {
+      width:100%; box-sizing:border-box;
+      background:var(--bg); border:1px solid var(--border); border-radius:8px;
+      color:var(--text); font-size:13px; padding:8px 10px; outline:none;
+    }
+    .edit-field input:focus, .edit-field select:focus, .edit-field textarea:focus { border-color:var(--accent); }
+    .edit-field textarea { resize:vertical; min-height:70px; }
+    .edit-modal-actions { display:flex; gap:10px; margin-top:20px; }
+    .btn-danger { background:#ff6b6b22; color:#ff6b6b; border:1px solid #ff6b6b44; border-radius:8px; padding:8px 16px; cursor:pointer; font-size:13px; font-weight:600; }
+    .btn-danger:hover { background:#ff6b6b33; }
+
     /* ─── Sidebar ─────────────────────────────────────── */
     .sidebar {
       width: 260px;
@@ -1664,7 +1665,7 @@ async function searchSMEs(countryId) {
   });
 
   es.addEventListener('done', e => {
-    const { total, verified, illustrative, elapsedSeconds, cost } = JSON.parse(e.data);
+    const { total, verified, elapsedSeconds, cost } = JSON.parse(e.data);
     if (cost) addCost(cost);
     es.close();
     document.getElementById('tBody')?.querySelector('.tcursor')?.remove();
@@ -1673,9 +1674,7 @@ async function searchSMEs(countryId) {
     const lh = document.getElementById('liveHdr');
     const costBadge = cost ? `<span style="font-size:11px;color:var(--warning);margin-left:8px">💰 ${cost.display}</span>` : '';
     if (lh) lh.innerHTML = `
-      <span style="color:var(--success)">✅ Search complete — ${total} SMEs found in ${elapsedSeconds}s</span>
-      ${verified     ? `<span class="badge-v">${verified} verified</span>` : ''}
-      ${illustrative ? `<span class="badge-i">${illustrative} illustrative</span>` : ''}
+      <span style="color:var(--success)">✅ Search complete — ${verified || total} verified SMEs found in ${elapsedSeconds}s</span>
       ${costBadge}`;
     btn.disabled = false;
     btn.innerHTML = `🔍 Search More SMEs`;
@@ -1742,9 +1741,6 @@ function addSmeCard(s) {
   // Dedup: skip if card already rendered
   if (document.querySelector(`[data-sme-id="${s.id}"]`)) return;
 
-  const badge = s.isIllustrative
-    ? `<span class="badge-i" title="Illustrative">illustrative</span>`
-    : `<span class="badge-v" title="Verified real business">verified</span>`;
   const div = document.createElement('div');
   div.className = 'sme-card card-new';
   div.setAttribute('data-sme-id', s.id);
@@ -1753,7 +1749,7 @@ function addSmeCard(s) {
     <div class="sme-card-header">
       <div class="sme-avatar">${getEmoji(s.industry)}</div>
       <div style="flex:1;min-width:0">
-        <div class="sme-name">${s.name} ${badge}</div>
+        <div class="sme-name">${s.name} <span class="badge-v" title="Verified real business">verified</span></div>
         <div class="sme-type">${s.productType}</div>
       </div>
       <span class="sme-status status-${s.status}">${s.status.replace('_',' ')}</span>
@@ -1863,6 +1859,8 @@ function renderDetailActions(sme) {
         ${hasEmail ? '🔄 Regenerate Email' : '✉️ Generate Email'}
       </button>
     ` : ''}
+    <button class="btn btn-secondary btn-sm" onclick="openEditSme('${sme.id}')" title="Edit business details">✏️ Edit</button>
+    <button class="btn-danger btn-sm" onclick="deleteSme('${sme.id}')" title="Delete this business">🗑 Delete</button>
   `;
 }
 
@@ -1946,14 +1944,9 @@ function renderInfoTab(sme) {
             </div>`
           : ''
         }
-        ${sme.isIllustrative
-          ? `<div style="margin-top:8px;padding:10px 12px;background:#ff9f4310;border-radius:8px;border:1px solid #ff9f4330;font-size:12px;color:#ff9f43">
-              ⚠️ This is an <strong>illustrative profile</strong>. Real social media links could not be verified for this business. Use it as a template for your outreach approach.
-            </div>`
-          : `<div style="margin-top:8px;padding:8px 12px;background:#43e97b10;border-radius:8px;border:1px solid #43e97b30;font-size:12px;color:var(--success)">
-              ✓ Social links above were <strong>verified via web search</strong> — this business has no independent website.
-            </div>`
-        }
+        <div style="margin-top:8px;padding:8px 12px;background:#43e97b10;border-radius:8px;border:1px solid #43e97b30;font-size:12px;color:var(--success)">
+          ✓ Social links above were <strong>verified via web search</strong> — this business has no independent website.
+        </div>
       </div>
     </div>
 
@@ -2405,6 +2398,91 @@ function downloadHtml(smeId, smeName) {
   a.click();
 }
 
+// ─── SME Edit / Delete ─────────────────────────────────
+function openEditSme(smeId) {
+  let sme = null;
+  for (const list of Object.values(state.smes)) {
+    sme = list.find(s => s.id === smeId);
+    if (sme) break;
+  }
+  if (!sme) return;
+
+  const industries = ['Food & Beverage','Fashion & Clothing','Beauty & Cosmetics','Crafts & Handmade','Jewelry','Home Goods','Agriculture','Education','Services','Other'];
+  document.getElementById('editSmeId').value = sme.id;
+  document.getElementById('editName').value = sme.name || '';
+  document.getElementById('editIndustry').value = sme.industry || '';
+  document.getElementById('editLocation').value = sme.location || '';
+  document.getElementById('editOwner').value = sme.ownerName || '';
+  document.getElementById('editEmail').value = sme.contactEmail || '';
+  document.getElementById('editDescription').value = sme.description || '';
+  document.getElementById('editFacebook').value = sme.socialMedia?.facebook || '';
+  document.getElementById('editInstagram').value = sme.socialMedia?.instagram || '';
+  document.getElementById('editWhatsapp').value = sme.socialMedia?.whatsapp || '';
+
+  // Populate industry options
+  const sel = document.getElementById('editIndustry');
+  sel.innerHTML = industries.map(i => `<option value="${i}" ${sme.industry === i ? 'selected' : ''}>${i}</option>`).join('');
+
+  document.getElementById('editModal').classList.add('open');
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').classList.remove('open');
+}
+
+async function saveEditSme() {
+  const id = document.getElementById('editSmeId').value;
+  const fb = document.getElementById('editFacebook').value.trim();
+  const ig = document.getElementById('editInstagram').value.trim();
+  const wa = document.getElementById('editWhatsapp').value.trim();
+  const body = {
+    name:        document.getElementById('editName').value.trim(),
+    industry:    document.getElementById('editIndustry').value,
+    location:    document.getElementById('editLocation').value.trim(),
+    ownerName:   document.getElementById('editOwner').value.trim(),
+    contactEmail:document.getElementById('editEmail').value.trim() || null,
+    description: document.getElementById('editDescription').value.trim(),
+    socialMedia: { facebook: fb || null, instagram: ig || null, whatsapp: wa || null },
+  };
+  try {
+    const updated = await api('PUT', `/smes/${id}`, body);
+    // Update in local state
+    for (const list of Object.values(state.smes)) {
+      const idx = list.findIndex(s => s.id === id);
+      if (idx !== -1) { list[idx] = updated; break; }
+    }
+    // Refresh card and detail panel
+    const card = document.querySelector(`[data-sme-id="${id}"]`);
+    if (card) card.remove();
+    addSmeCard(updated);
+    state.currentSme = updated;
+    renderDetailActions(updated);
+    renderInfoTab(updated);
+    document.getElementById('detailName').textContent = updated.name;
+    document.getElementById('detailSub').textContent = `${updated.productType} · ${updated.location}`;
+    closeEditModal();
+    toast('Changes saved', 'success');
+  } catch (e) { toast(`Save failed: ${e.message}`, 'error'); }
+}
+
+async function deleteSme(smeId) {
+  if (!confirm('Delete this business from the portal? This cannot be undone.')) return;
+  try {
+    await api('DELETE', `/smes/${smeId}`);
+    // Remove from state
+    for (const [cid, list] of Object.entries(state.smes)) {
+      const idx = list.findIndex(s => s.id === smeId);
+      if (idx !== -1) { list.splice(idx, 1); break; }
+    }
+    const card = document.querySelector(`[data-sme-id="${smeId}"]`);
+    if (card) card.remove();
+    closeDetail();
+    renderCountryList();
+    updateStats();
+    toast('Business deleted', 'success');
+  } catch (e) { toast(`Delete failed: ${e.message}`, 'error'); }
+}
+
 // ─── Init ──────────────────────────────────────────────
 document.getElementById('topbarTitle').innerHTML = `
   Dashboard
@@ -2416,5 +2494,54 @@ document.getElementById('topbarActions').innerHTML = `
 
 loadCountries();
 </script>
+
+<!-- Edit SME Modal -->
+<div id="editModal">
+  <div class="edit-modal-box">
+    <h3>Edit Business</h3>
+    <input type="hidden" id="editSmeId" />
+    <div class="edit-field">
+      <label>Business Name</label>
+      <input type="text" id="editName" />
+    </div>
+    <div class="edit-field">
+      <label>Industry</label>
+      <select id="editIndustry"></select>
+    </div>
+    <div class="edit-field">
+      <label>Location</label>
+      <input type="text" id="editLocation" />
+    </div>
+    <div class="edit-field">
+      <label>Owner Name</label>
+      <input type="text" id="editOwner" />
+    </div>
+    <div class="edit-field">
+      <label>Contact Email</label>
+      <input type="email" id="editEmail" />
+    </div>
+    <div class="edit-field">
+      <label>Description</label>
+      <textarea id="editDescription"></textarea>
+    </div>
+    <div class="edit-field">
+      <label>Facebook URL</label>
+      <input type="url" id="editFacebook" placeholder="https://facebook.com/..." />
+    </div>
+    <div class="edit-field">
+      <label>Instagram URL</label>
+      <input type="url" id="editInstagram" placeholder="https://instagram.com/..." />
+    </div>
+    <div class="edit-field">
+      <label>WhatsApp Number</label>
+      <input type="text" id="editWhatsapp" placeholder="+1234567890" />
+    </div>
+    <div class="edit-modal-actions">
+      <button class="btn btn-primary" onclick="saveEditSme()">Save Changes</button>
+      <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
