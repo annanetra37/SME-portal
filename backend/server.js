@@ -1606,6 +1606,7 @@ app.post('/api/smes/:id/deploy', async (req, res) => {
   if (!sr[0]) return res.status(400).json({ error: 'Build website first' });
 
   if (!process.env.GITHUB_TOKEN) return res.status(400).json({ error: 'GITHUB_TOKEN env variable not set' });
+  console.log('[deploy] GITHUB_TOKEN present, length:', process.env.GITHUB_TOKEN.length, 'prefix:', process.env.GITHUB_TOKEN.slice(0, 6));
   if (!process.env.RAILWAY_TOKEN) return res.status(400).json({ error: 'RAILWAY_TOKEN env variable not set' });
 
   // Respond immediately — stream logs via existing build-stream SSE
