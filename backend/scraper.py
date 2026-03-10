@@ -50,6 +50,26 @@ HEADERS = {
     )
 }
 
+# ── instagrapi monkey-patch ───────────────────────────────────────────────────
+# Older instagrapi versions crash with KeyError('pinned_channels_info') because
+# some accounts don't have that field.  Patch it once at import time.
+def _patch_instagrapi():
+    try:
+        import instagrapi.extractors as _ext
+
+        def _safe_extract_broadcast_channel(data: dict) -> list:
+            try:
+                info = data.get("pinned_channels_info") or {}
+                return info.get("pinned_channels_list") or []
+            except Exception:
+                return []
+
+        _ext.extract_broadcast_channel = _safe_extract_broadcast_channel
+    except Exception:
+        pass  # instagrapi not installed — will be caught later
+
+_patch_instagrapi()
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def detect_platform(url: str) -> str:
@@ -129,12 +149,12 @@ def accept_and_dedup(src: Path, web_dir: Path, seen: set, meta: dict) -> dict | 
 # ── Instagram ─────────────────────────────────────────────────────────────────
 
 def get_ig_client():
+    """Return an authenticated instagrapi Client, or raise RuntimeError."""
     try:
         from instagrapi import Client
         from instagrapi.exceptions import TwoFactorRequired
     except ImportError:
-        log.error("instagrapi not installed — run: pip install instagrapi")
-        sys.exit(1)
+        raise RuntimeError("instagrapi not installed — run: pip install instagrapi")
 
     cl = Client()
     cl.delay_range = [1, 3]
@@ -145,7 +165,10 @@ def get_ig_client():
 
     if session_id:
         log.info("Authenticating Instagram via session ID…")
-        cl.login_by_sessionid(session_id)
+        try:
+            cl.login_by_sessionid(session_id)
+        except Exception as e:
+            raise RuntimeError(f"login_by_sessionid failed: {e}")
         cl.dump_settings(str(SESSION_FILE))
         return cl
 
@@ -161,12 +184,11 @@ def get_ig_client():
             SESSION_FILE.unlink(missing_ok=True)
 
     if not username or not password:
-        log.error(
+        raise RuntimeError(
             "Instagram auth required. Set one of:\n"
             "  IG_SESSION   — sessionid cookie from browser (recommended)\n"
             "  IG_USERNAME + IG_PASSWORD"
         )
-        sys.exit(1)
 
     log.info("Logging in as @%s…", username)
     try:
@@ -180,7 +202,12 @@ def get_ig_client():
 
 def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
     log.info("Instagram: scraping @%s (max %d images)", handle, max_images)
-    cl = get_ig_client()
+
+    try:
+        cl = get_ig_client()
+    except RuntimeError as e:
+        log.error("Instagram auth failed: %s", e)
+        return []
 
     try:
         user_id = cl.user_id_from_username(handle)
@@ -238,8 +265,8 @@ def scrape_facebook(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) 
     try:
         from facebook_scraper import get_posts
     except ImportError:
-        log.error("facebook-scraper not installed — run: pip install facebook-scraper")
-        sys.exit(1)
+        log.warning("facebook-scraper not installed — skipping Facebook scrape (run: pip install facebook-scraper)")
+        return []
 
     log.info("Facebook: scraping page '%s' (max %d images)", handle, max_images)
 
@@ -303,7 +330,12 @@ def main():
         handle   = extract_handle(args.url)
     except ValueError as e:
         log.error(str(e))
-        sys.exit(1)
+        # Still write empty results so Node.js always gets valid JSON
+        out_dir = Path(args.output)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with open(out_dir / "results.json", "w", encoding="utf-8") as f:
+            json.dump({"platform": "unknown", "handle": "", "images": []}, f)
+        sys.exit(0)
 
     out_dir = Path(args.output)
     web_dir = out_dir / "web"
@@ -313,10 +345,14 @@ def main():
 
     log.info("Platform: %s | Handle: %s | Max: %d", platform, handle, args.max)
 
-    if platform == "instagram":
-        records = scrape_instagram(handle, web_dir, tmp_dir, args.max)
-    else:
-        records = scrape_facebook(handle, web_dir, tmp_dir, args.max)
+    try:
+        if platform == "instagram":
+            records = scrape_instagram(handle, web_dir, tmp_dir, args.max)
+        else:
+            records = scrape_facebook(handle, web_dir, tmp_dir, args.max)
+    except Exception as e:
+        log.error("Unhandled scraper error: %s", e)
+        records = []
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
