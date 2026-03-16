@@ -683,7 +683,7 @@ function runPyScraper(url, maxImages, logCb = null) {
  * Skips if the SME already has ≥5 stored images.
  * Returns the base64 data URIs of all stored images.
  */
-async function scrapeAndStoreImages(sme, maxImages = 15, logCb = null, abortCtx = null) {
+async function scrapeAndStoreImages(sme, maxImages = 6, logCb = null, abortCtx = null) {
   const _log = (msg) => { console.log(`  📷 ${msg}`); if (logCb) logCb(msg); };
 
   // Return cached images if we already have enough
@@ -1513,7 +1513,7 @@ app.post('/api/smes/:id/scrape-images', async (req, res) => {
       }
 
       L(`PHASE 1 — Python scraper (requires IG_SESSION or IG_USERNAME/IG_PASSWORD in .env)`, 'phase');
-      const images = await scrapeAndStoreImages(sme, req.body?.max || 15, (msg) => L(msg, 'info'), abortCtx);
+      const images = await scrapeAndStoreImages(sme, req.body?.max || 6, (msg) => L(msg, 'info'), abortCtx);
 
       if (abortCtx.killed) {
         L(`Scrape stopped by user`, 'warn');
