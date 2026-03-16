@@ -1239,6 +1239,23 @@ app.put('/api/smes/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/countries/:id/smes', async (req, res) => {
+  try {
+    const { name, industry, productType, description, location, contactEmail,
+            ownerName, socialMedia, followers, products, priceRange,
+            foundedYear, employeeCount, monthlyRevenue, tags, noWebsiteReason,
+            opportunityScore, languages } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+    const sme = await insertSme(req.params.id, {
+      name: name.trim(), industry, productType, description, location,
+      contactEmail, ownerName, socialMedia, followers, products, priceRange,
+      foundedYear, employeeCount, monthlyRevenue, tags, noWebsiteReason,
+      opportunityScore, languages, isIllustrative: false,
+    });
+    res.status(201).json(sme);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/api/smes/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM sme_images WHERE sme_id=$1', [req.params.id]);
