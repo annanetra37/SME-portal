@@ -144,68 +144,125 @@ def accept_and_dedup(src: Path, web_dir: Path, seen: set, meta: dict) -> dict | 
         src.unlink(missing_ok=True)
         return None
 
-# ── Instagram (direct HTTP — no library, no rate-limit hangs) ─────────────────
+# ── Instagram (via public viewer proxies — no login required) ─────────────────
+#
+# Instagram blocks unauthenticated server IPs (redirects to /accounts/login/).
+# We use public Instagram viewer sites that cache and re-serve the same CDN
+# images without needing a session.  Multiple sources are tried in order.
 
-def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
-    """
-    Scrape a public Instagram profile via plain HTTP requests.
-    Parses display_url values from the JSON Instagram embeds in the page
-    and og:image meta tags.  No credentials or third-party library needed.
-    A random human-like delay is inserted between each download to avoid
-    triggering bot detection.
-    """
-    import re as _re
-    import random
+import re as _re
+import random as _random
 
-    log.info("Instagram: scraping @%s (max %d images) via HTTP", handle, max_images)
+# Rotate through realistic browser User-Agents so each request looks different
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+]
 
-    url = f"https://www.instagram.com/{handle}/"
-    headers = {
-        **HEADERS,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
+def _rand_headers(referer: str = "") -> dict:
+    ua = _random.choice(_USER_AGENTS)
+    h = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "DNT": "1",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
     }
+    if referer:
+        h["Referer"] = referer
+    return h
 
-    # Small initial pause — looks more human
-    time.sleep(random.uniform(1.5, 3.0))
-
+def _fetch_image_urls_picuki(handle: str, session: requests.Session) -> list[str]:
+    """picuki.com — public Instagram viewer, no login needed."""
+    url = f"https://www.picuki.com/profile/{handle}"
     try:
-        r = requests.get(url, headers=headers, timeout=20)
+        r = session.get(url, headers=_rand_headers("https://www.picuki.com/"), timeout=20)
         r.raise_for_status()
     except Exception as e:
-        log.warning("Instagram page fetch failed for @%s: %s", handle, e)
+        log.debug("picuki fetch failed: %s", e)
         return []
-
     html = r.text
-    image_urls: list[str] = []
-
-    # Strategy 1: display_url values embedded in the page JSON blobs
-    for m in _re.finditer(r'"display_url"\s*:\s*"(https://[^"]+)"', html):
-        u = m.group(1).replace("\\u0026", "&").replace("\\/", "/")
-        if u not in image_urls:
-            image_urls.append(u)
-
-    # Strategy 2: og:image meta tags (usually the profile pic or first post)
-    for m in _re.finditer(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html):
+    urls: list[str] = []
+    # picuki wraps posts in <div class="photo"> and uses <img> with src pointing to CDN
+    for m in _re.finditer(r'<img[^>]+src="(https://[^"]*(?:cdninstagram|fbcdn)[^"]+)"', html):
         u = m.group(1)
-        if u not in image_urls:
-            image_urls.append(u)
+        if u not in urls:
+            urls.append(u)
+    # fallback: any img under a post-image class
+    for m in _re.finditer(r'class="[^"]*post-image[^"]*"[^>]*(?:src|data-src)="([^"]+)"', html):
+        u = m.group(1)
+        if u not in urls:
+            urls.append(u)
+    log.info("  picuki: %d URL(s) found for @%s", len(urls), handle)
+    return urls
+
+def _fetch_image_urls_imginn(handle: str, session: requests.Session) -> list[str]:
+    """imginn.com — another public Instagram viewer."""
+    url = f"https://imginn.com/{handle}/"
+    try:
+        r = session.get(url, headers=_rand_headers("https://imginn.com/"), timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        log.debug("imginn fetch failed: %s", e)
+        return []
+    html = r.text
+    urls: list[str] = []
+    for m in _re.finditer(r'data-src="(https://[^"]*(?:cdninstagram|fbcdn)[^"]+)"', html):
+        u = m.group(1)
+        if u not in urls:
+            urls.append(u)
+    for m in _re.finditer(r'<img[^>]+src="(https://[^"]*(?:cdninstagram|fbcdn)[^"]+)"', html):
+        u = m.group(1)
+        if u not in urls:
+            urls.append(u)
+    log.info("  imginn: %d URL(s) found for @%s", len(urls), handle)
+    return urls
+
+def _fetch_image_urls_insta_stories(handle: str, session: requests.Session) -> list[str]:
+    """instastories.bar — another public viewer as last resort."""
+    url = f"https://instastories.bar/tag/{handle}"
+    try:
+        r = session.get(url, headers=_rand_headers("https://instastories.bar/"), timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        log.debug("instastories fetch failed: %s", e)
+        return []
+    html = r.text
+    urls: list[str] = []
+    for m in _re.finditer(r'<img[^>]+src="(https://[^"]*(?:cdninstagram|fbcdn)[^"]+)"', html):
+        u = m.group(1)
+        if u not in urls:
+            urls.append(u)
+    log.info("  instastories: %d URL(s) found for @%s", len(urls), handle)
+    return urls
+
+def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
+    log.info("Instagram: scraping @%s (max %d images) via public viewers", handle, max_images)
+
+    # Brief human-like pause before starting
+    time.sleep(_random.uniform(1.0, 2.5))
+
+    session = requests.Session()
+
+    # Try each public viewer in order until we have enough candidate URLs
+    image_urls: list[str] = []
+    for source_fn in (_fetch_image_urls_picuki, _fetch_image_urls_imginn, _fetch_image_urls_insta_stories):
+        image_urls = source_fn(handle, session)
+        if image_urls:
+            break
+        time.sleep(_random.uniform(1.5, 3.0))  # pause between source attempts
 
     if not image_urls:
-        log.warning("Instagram: no image URLs found in page for @%s", handle)
+        log.warning("Instagram: no image URLs found for @%s from any source", handle)
         return []
 
-    log.info("Instagram: found %d candidate URL(s) for @%s", len(image_urls), handle)
+    log.info("Instagram: %d candidate URL(s) to process for @%s", len(image_urls), handle)
 
-    http = requests.Session()
-    http.headers.update(HEADERS)
     seen: set = set()
     records: list = []
     count = 0
@@ -215,7 +272,15 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
             break
         tmp_file = tmp_dir / f"_ig_{count}.jpg"
         count += 1
-        if not download_url(img_url, tmp_file, http):
+        dl_headers = _rand_headers(f"https://www.instagram.com/{handle}/")
+        try:
+            r = session.get(img_url, headers=dl_headers, timeout=25, stream=True)
+            r.raise_for_status()
+            with open(tmp_file, "wb") as f:
+                for chunk in r.iter_content(65536):
+                    f.write(chunk)
+        except Exception as e:
+            log.debug("Image download failed %s: %s", img_url, e)
             continue
         meta = {
             "platform": "instagram",
@@ -228,8 +293,8 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
         if rec:
             records.append(rec)
             log.info("  [%d/%d] saved: %s", len(records), max_images, Path(rec["path"]).name)
-        # Human-like random delay between downloads
-        time.sleep(random.uniform(2.0, 4.5))
+        # Random delay between downloads — mimics human browsing pace
+        time.sleep(_random.uniform(2.0, 4.0))
 
     log.info("Instagram done — %d images.", len(records))
     return records
