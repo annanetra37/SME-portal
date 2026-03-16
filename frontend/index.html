@@ -750,6 +750,11 @@
 
     .modal-overlay.open .modal { transform: scale(1) translateY(0); }
 
+    .modal.modal-wide { width: 600px; max-height: 90vh; overflow-y: auto; }
+    .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+    .modal-grid .form-group.full { grid-column: 1 / -1; }
+    .modal-section-label { grid-column: 1 / -1; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin: 16px 0 4px; }
+
     .modal-title { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 700; margin-bottom: 6px; }
     .modal-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
 
@@ -1250,6 +1255,115 @@
   </div>
 </div>
 
+<!-- ─── ADD SME MODAL ─── -->
+<div class="modal-overlay" id="addSmeModal">
+  <div class="modal modal-wide">
+    <div class="modal-title">Add Business Manually</div>
+    <div class="modal-sub">Fill in the details to add an SME directly to this country</div>
+    <input type="hidden" id="addSmeCountryId" />
+    <div class="modal-grid">
+
+      <div class="modal-section-label">Business Info</div>
+
+      <div class="form-group full">
+        <label class="form-label">Business Name <span style="color:#f87171">*</span></label>
+        <input class="form-input" id="addSmeName" placeholder="e.g. Sisian Ceramics" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Industry</label>
+        <select class="form-input" id="addSmeIndustry">
+          <option value="">Select industry…</option>
+          <option>Food & Beverage</option>
+          <option>Fashion & Clothing</option>
+          <option>Beauty & Cosmetics</option>
+          <option>Crafts & Handmade</option>
+          <option>Jewelry</option>
+          <option>Home Goods</option>
+          <option>Agriculture</option>
+          <option>Education</option>
+          <option>Services</option>
+          <option>Other</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Product / Service Type</label>
+        <input class="form-input" id="addSmeProductType" placeholder="e.g. Handmade ceramics" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Location</label>
+        <input class="form-input" id="addSmeLocation" placeholder="e.g. Yerevan, Armenia" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Price Range</label>
+        <input class="form-input" id="addSmePriceRange" placeholder="e.g. $10–$150" />
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label">Description</label>
+        <textarea class="form-input" id="addSmeDescription" rows="3" placeholder="Brief description of the business…" style="resize:vertical"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Products / Services</label>
+        <input class="form-input" id="addSmeProducts" placeholder="Comma-separated: Mugs, Bowls, Vases" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Founded Year</label>
+        <input class="form-input" id="addSmeFoundedYear" type="number" placeholder="e.g. 2018" min="1900" max="2099" />
+      </div>
+
+      <div class="modal-section-label">Owner & Contact</div>
+
+      <div class="form-group">
+        <label class="form-label">Owner Name</label>
+        <input class="form-input" id="addSmeOwnerName" placeholder="e.g. Vahagn H." />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Contact Email</label>
+        <input class="form-input" id="addSmeContactEmail" type="email" placeholder="owner@example.com" />
+      </div>
+
+      <div class="modal-section-label">Social Media</div>
+
+      <div class="form-group full">
+        <label class="form-label">Instagram URL</label>
+        <input class="form-input" id="addSmeInstagram" type="url" placeholder="https://instagram.com/handle" />
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label">Facebook URL</label>
+        <input class="form-input" id="addSmeFacebook" type="url" placeholder="https://facebook.com/page" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">WhatsApp Number</label>
+        <input class="form-input" id="addSmeWhatsapp" placeholder="+37491123456" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Instagram Followers</label>
+        <input class="form-input" id="addSmeIgFollowers" type="number" placeholder="e.g. 3200" min="0" />
+      </div>
+
+      <div class="form-group full">
+        <label class="form-label">Facebook Followers / Likes</label>
+        <input class="form-input" id="addSmeFbFollowers" type="number" placeholder="e.g. 1800" min="0" />
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('addSmeModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAddSme()">Add Business</button>
+    </div>
+  </div>
+</div>
+
 <!-- ─── TOAST CONTAINER ─── -->
 <div class="toast-container" id="toastContainer"></div>
 
@@ -1497,6 +1611,9 @@ async function showCountryView(country) {
   document.getElementById('topbarActions').innerHTML = `
     <button class="btn btn-secondary" onclick="toggleSearchFilters()" id="filtersToggleBtn" title="Search filters">
       ⚙️ Filters
+    </button>
+    <button class="btn btn-secondary" onclick="openAddSme('${country.id}')">
+      ＋ Add SME
     </button>
     <button class="btn btn-primary" onclick="searchSMEs('${country.id}')" id="searchBtn">
       🔍 Search SMEs
@@ -2451,6 +2568,59 @@ function downloadHtml(smeId, smeName) {
 }
 
 // ─── SME Edit / Delete ─────────────────────────────────
+// ─── Add SME manually ──────────────────────────────────
+function openAddSme(countryId) {
+  document.getElementById('addSmeCountryId').value = countryId;
+  // Clear all fields
+  ['addSmeName','addSmeProductType','addSmeLocation','addSmePriceRange',
+   'addSmeDescription','addSmeProducts','addSmeFoundedYear',
+   'addSmeOwnerName','addSmeContactEmail','addSmeInstagram',
+   'addSmeFacebook','addSmeWhatsapp','addSmeIgFollowers','addSmeFbFollowers']
+    .forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('addSmeIndustry').value = '';
+  openModal('addSmeModal');
+}
+
+async function saveAddSme() {
+  const countryId = document.getElementById('addSmeCountryId').value;
+  const name = document.getElementById('addSmeName').value.trim();
+  if (!name) { toast('Business name is required', 'error'); return; }
+
+  const ig = document.getElementById('addSmeInstagram').value.trim();
+  const fb = document.getElementById('addSmeFacebook').value.trim();
+  const wa = document.getElementById('addSmeWhatsapp').value.trim();
+  const igF = parseInt(document.getElementById('addSmeIgFollowers').value) || 0;
+  const fbF = parseInt(document.getElementById('addSmeFbFollowers').value) || 0;
+  const fy  = parseInt(document.getElementById('addSmeFoundedYear').value)  || null;
+  const rawProducts = document.getElementById('addSmeProducts').value;
+  const products = rawProducts ? rawProducts.split(',').map(p => p.trim()).filter(Boolean) : [];
+
+  const body = {
+    name,
+    industry:     document.getElementById('addSmeIndustry').value     || 'Other',
+    productType:  document.getElementById('addSmeProductType').value.trim()  || '',
+    location:     document.getElementById('addSmeLocation').value.trim()     || '',
+    priceRange:   document.getElementById('addSmePriceRange').value.trim()   || '',
+    description:  document.getElementById('addSmeDescription').value.trim()  || '',
+    ownerName:    document.getElementById('addSmeOwnerName').value.trim()    || '',
+    contactEmail: document.getElementById('addSmeContactEmail').value.trim() || null,
+    products,
+    foundedYear:  fy,
+    socialMedia:  { instagram: ig || null, facebook: fb || null, whatsapp: wa || null },
+    followers:    { instagram: igF, facebook: fbF },
+  };
+
+  try {
+    const sme = await api('POST', `/countries/${countryId}/smes`, body);
+    if (!state.smes[countryId]) state.smes[countryId] = [];
+    state.smes[countryId].unshift(sme);
+    addSmeCard(sme);
+    updateStats();
+    closeModal('addSmeModal');
+    toast(`"${sme.name}" added`, 'success');
+  } catch (e) { toast(`Failed: ${e.message}`, 'error'); }
+}
+
 function openEditSme(smeId) {
   let sme = null;
   for (const list of Object.values(state.smes)) {
