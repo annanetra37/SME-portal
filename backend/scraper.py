@@ -4,9 +4,9 @@ Social Media Image Scraper — SME Portal integration.
 Usage:
     python3 scraper.py <instagram_or_facebook_url> --output <dir> --max <n>
 
-Credentials (via environment variables):
-    Instagram:  IG_SESSION   (recommended — sessionid cookie from browser)
-                IG_USERNAME + IG_PASSWORD  (fallback)
+Credentials (via environment variables — all optional for public profiles):
+    Instagram:  IG_SESSION   (sessionid cookie — speeds up, avoids rate limits)
+                IG_USERNAME + IG_PASSWORD  (fallback login)
     Facebook:   FB_COOKIES   (path to Netscape cookies.txt — optional)
 
 Output:
@@ -14,7 +14,7 @@ Output:
     {output_dir}/results.json — metadata list consumed by Node.js
 """
 
-import os, re, sys, json, shutil, hashlib, logging, argparse, mimetypes, time
+import os, sys, json, shutil, hashlib, logging, argparse, time, tempfile
 from pathlib import Path
 from datetime import datetime
 
@@ -31,7 +31,7 @@ except ImportError:
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stderr)],   # stderr so stdout stays clean for JSON
+    handlers=[logging.StreamHandler(sys.stderr)],
 )
 log = logging.getLogger("scraper")
 
@@ -39,8 +39,8 @@ log = logging.getLogger("scraper")
 MIN_WIDTH    = 400
 MIN_HEIGHT   = 400
 MIN_SIZE     = 20_000   # bytes
-DL_DELAY     = 1.2      # seconds between downloads
-SESSION_FILE = Path("/tmp/.instagram_session.json")
+DL_DELAY     = 1.5      # seconds between downloads
+IL_SESSION   = Path("/tmp/.instaloader_session")
 
 HEADERS = {
     "User-Agent": (
@@ -51,8 +51,7 @@ HEADERS = {
 }
 
 # ── instagrapi monkey-patch ───────────────────────────────────────────────────
-# Older instagrapi versions crash with KeyError('pinned_channels_info') because
-# some accounts don't have that field.  Patch it once at import time.
+# Some instagrapi versions crash with KeyError('pinned_channels_info').
 def _patch_instagrapi():
     try:
         import instagrapi.extractors as _ext
@@ -66,7 +65,7 @@ def _patch_instagrapi():
 
         _ext.extract_broadcast_channel = _safe_extract_broadcast_channel
     except Exception:
-        pass  # instagrapi not installed — will be caught later
+        pass
 
 _patch_instagrapi()
 
@@ -130,7 +129,6 @@ def accept_and_dedup(src: Path, web_dir: Path, seen: set, meta: dict) -> dict | 
         src.unlink(missing_ok=True)
         return None
     seen.add(digest)
-    # Convert to web-ready JPEG
     try:
         web_dir.mkdir(parents=True, exist_ok=True)
         out_path = web_dir / f"{digest}.jpg"
@@ -146,115 +144,130 @@ def accept_and_dedup(src: Path, web_dir: Path, seen: set, meta: dict) -> dict | 
         src.unlink(missing_ok=True)
         return None
 
-# ── Instagram ─────────────────────────────────────────────────────────────────
+# ── Instagram via instaloader (primary — no credentials needed for public profiles) ──
 
-def get_ig_client():
-    """Return an authenticated instagrapi Client, or raise RuntimeError."""
-    try:
-        from instagrapi import Client
-        from instagrapi.exceptions import TwoFactorRequired
-    except ImportError:
-        raise RuntimeError("instagrapi not installed — run: pip install instagrapi")
+def _get_instaloader():
+    """Return a configured instaloader.Instaloader instance, optionally authenticated."""
+    import instaloader
+    il = instaloader.Instaloader(
+        download_pictures=True,
+        download_videos=False,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        download_comments=False,
+        save_metadata=False,
+        compress_json=False,
+        quiet=True,
+    )
 
-    cl = Client()
-    cl.delay_range = [1, 3]
+    session_id = os.getenv("IG_SESSION", "").strip().lstrip("=")
+    username   = os.getenv("IG_USERNAME", "").strip()
+    password   = os.getenv("IG_PASSWORD", "").strip()
 
-    session_id = os.getenv("IG_SESSION")
-    username   = os.getenv("IG_USERNAME")
-    password   = os.getenv("IG_PASSWORD")
-
-    if session_id:
-        log.info("Authenticating Instagram via session ID…")
+    # Try session cookie first (fastest, no password needed)
+    if session_id and username:
         try:
-            cl.login_by_sessionid(session_id)
-        except Exception as e:
-            raise RuntimeError(f"login_by_sessionid failed: {e}")
-        cl.dump_settings(str(SESSION_FILE))
-        return cl
-
-    if SESSION_FILE.exists():
-        log.info("Loading cached Instagram session…")
+            il.load_session_from_file(username, str(IL_SESSION))
+            log.info("Loaded cached instaloader session for @%s", username)
+            return il
+        except Exception:
+            pass
         try:
-            cl.load_settings(str(SESSION_FILE))
-            cl.get_timeline_feed()
-            log.info("Cached session valid.")
-            return cl
+            il.context._session.cookies.set("sessionid", session_id, domain=".instagram.com")
+            il.context.username = username
+            il.save_session_to_file(str(IL_SESSION))
+            log.info("Authenticated via IG_SESSION cookie for @%s", username)
+            return il
         except Exception as e:
-            log.warning("Cached session expired (%s), re-authenticating.", e)
-            SESSION_FILE.unlink(missing_ok=True)
+            log.warning("Session cookie auth failed (%s) — continuing anonymously", e)
 
-    if not username or not password:
-        raise RuntimeError(
-            "Instagram auth required. Set one of:\n"
-            "  IG_SESSION   — sessionid cookie from browser (recommended)\n"
-            "  IG_USERNAME + IG_PASSWORD"
-        )
+    # Try username/password login
+    if username and password:
+        try:
+            il.login(username, password)
+            il.save_session_to_file(str(IL_SESSION))
+            log.info("Logged in as @%s", username)
+            return il
+        except Exception as e:
+            log.warning("Username/password login failed (%s) — continuing anonymously", e)
 
-    log.info("Logging in as @%s…", username)
-    try:
-        cl.login(username, password)
-    except TwoFactorRequired:
-        code = input("2FA code: ").strip()
-        cl.login(username, password, verification_code=code)
-
-    cl.dump_settings(str(SESSION_FILE))
-    return cl
+    log.info("No Instagram credentials set — scraping public profile anonymously")
+    return il
 
 def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
-    log.info("Instagram: scraping @%s (max %d images)", handle, max_images)
+    log.info("Instagram: scraping @%s (max %d images) via instaloader", handle, max_images)
 
     try:
-        cl = get_ig_client()
-    except RuntimeError as e:
-        log.error("Instagram auth failed: %s", e)
+        import instaloader
+    except ImportError:
+        log.error("instaloader not installed — run: pip install instaloader")
         return []
 
     try:
-        user_id = cl.user_id_from_username(handle)
+        il = _get_instaloader()
     except Exception as e:
-        log.error("Could not resolve Instagram user ID: %s", e)
+        log.error("Failed to initialise instaloader: %s", e)
         return []
 
     try:
-        medias = cl.user_medias(user_id, amount=max_images * 2)  # fetch extra, filter after
+        profile = instaloader.Profile.from_username(il.context, handle)
+    except instaloader.exceptions.ProfileNotExistsException:
+        log.error("Instagram profile @%s does not exist", handle)
+        return []
     except Exception as e:
-        log.error("Failed to fetch Instagram media: %s", e)
+        log.error("Could not load Instagram profile @%s: %s", handle, e)
         return []
 
     seen: set = set()
     records: list = []
+    http = requests.Session()
+    http.headers.update(HEADERS)
+    count = 0
 
-    for media in medias:
-        if len(records) >= max_images:
-            break
-        paths = []
-        try:
-            if media.media_type == 1:       # photo
-                p = cl.photo_download(media.pk, folder=str(tmp_dir))
-                if p:
-                    paths.append(Path(p))
-            elif media.media_type == 8:     # carousel
-                ps = cl.album_download(media.pk, folder=str(tmp_dir))
-                paths.extend([Path(p) for p in (ps or [])])
-        except Exception as e:
-            log.warning("Skipping post %s: %s", media.pk, e)
-            continue
-
-        for p in paths:
+    try:
+        for post in profile.get_posts():
             if len(records) >= max_images:
                 break
-            meta = {
-                "platform": "instagram",
-                "handle": handle,
-                "source_url": f"https://www.instagram.com/p/{media.code}/",
-                "caption": (media.caption_text or "")[:300],
-                "likes": media.like_count,
-            }
-            rec = accept_and_dedup(p, web_dir, seen, meta)
-            if rec:
-                records.append(rec)
-                log.info("  [%d/%d] saved: %s", len(records), max_images, Path(rec["path"]).name)
-            time.sleep(DL_DELAY)
+            if post.typename not in ("GraphImage", "GraphSidecar"):
+                continue  # skip videos/reels
+
+            # Collect candidate image URLs from this post
+            candidate_urls: list[str] = []
+            try:
+                if post.typename == "GraphSidecar":
+                    for node in post.get_sidecar_nodes():
+                        if not node.is_video:
+                            candidate_urls.append(node.display_url)
+                else:
+                    candidate_urls.append(post.url)
+            except Exception as e:
+                log.warning("Skipping post %s: %s", post.shortcode, e)
+                continue
+
+            for img_url in candidate_urls:
+                if len(records) >= max_images:
+                    break
+                tmp_file = tmp_dir / f"_ig_{count}.jpg"
+                count += 1
+                if not download_url(img_url, tmp_file, http):
+                    continue
+                meta = {
+                    "platform": "instagram",
+                    "handle": handle,
+                    "source_url": f"https://www.instagram.com/p/{post.shortcode}/",
+                    "caption": (post.caption or "")[:300],
+                    "likes": post.likes,
+                }
+                rec = accept_and_dedup(tmp_file, web_dir, seen, meta)
+                if rec:
+                    records.append(rec)
+                    log.info("  [%d/%d] saved: %s", len(records), max_images, Path(rec["path"]).name)
+                time.sleep(DL_DELAY)
+
+    except instaloader.exceptions.QueryReturnedBadRequestException:
+        log.warning("Instagram rate-limited — got %d images before throttle", len(records))
+    except Exception as e:
+        log.error("Instagram scrape error: %s", e)
 
     log.info("Instagram done — %d images.", len(records))
     return records
@@ -265,7 +278,7 @@ def scrape_facebook(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) 
     try:
         from facebook_scraper import get_posts
     except ImportError:
-        log.warning("facebook-scraper not installed — skipping Facebook scrape (run: pip install facebook-scraper)")
+        log.warning("facebook-scraper not installed — skipping (run: pip install facebook-scraper)")
         return []
 
     log.info("Facebook: scraping page '%s' (max %d images)", handle, max_images)
@@ -320,9 +333,9 @@ def scrape_facebook(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) 
 
 def main():
     parser = argparse.ArgumentParser(description="SME Portal social media image scraper")
-    parser.add_argument("url",              help="Instagram or Facebook page URL")
-    parser.add_argument("--output", "-o",  default="/tmp/sme_scraper_out")
-    parser.add_argument("--max",    "-m",  type=int, default=15)
+    parser.add_argument("url",             help="Instagram or Facebook page URL")
+    parser.add_argument("--output", "-o", default="/tmp/sme_scraper_out")
+    parser.add_argument("--max",    "-m", type=int, default=15)
     args = parser.parse_args()
 
     try:
@@ -330,7 +343,6 @@ def main():
         handle   = extract_handle(args.url)
     except ValueError as e:
         log.error(str(e))
-        # Still write empty results so Node.js always gets valid JSON
         out_dir = Path(args.output)
         out_dir.mkdir(parents=True, exist_ok=True)
         with open(out_dir / "results.json", "w", encoding="utf-8") as f:
@@ -356,7 +368,6 @@ def main():
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Write results.json for Node.js to consume
     results_path = out_dir / "results.json"
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump({"platform": platform, "handle": handle, "images": records}, f, indent=2)
