@@ -192,7 +192,89 @@ def _get_instaloader():
             log.warning("Username/password login failed (%s) — continuing anonymously", e)
 
     log.info("No Instagram credentials set — scraping public profile anonymously")
+    # Never wait and retry on rate-limit — fail fast so the pipeline can fall through
+    il.context.max_connection_attempts = 1
     return il
+
+# ── Instagram HTTP fallback (no instaloader — parses public page JSON) ────────
+
+def _scrape_instagram_http(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
+    """
+    Scrape a public Instagram profile by fetching the page HTML and parsing
+    the JSON data Instagram embeds in <script type="application/json"> tags.
+    No credentials required.  Falls back gracefully on any parse failure.
+    """
+    import re as _re, json as _json
+
+    log.info("Instagram HTTP fallback: fetching public page for @%s", handle)
+    url = f"https://www.instagram.com/{handle}/"
+    headers = {
+        **HEADERS,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        log.warning("HTTP fallback: page fetch failed: %s", e)
+        return []
+
+    html = r.text
+    image_urls: list[str] = []
+
+    # Strategy 1: pull display_url values from embedded JSON blobs
+    for m in _re.finditer(r'"display_url"\s*:\s*"(https://[^"]+)"', html):
+        u = m.group(1).replace("\\u0026", "&").replace("\\/", "/")
+        if u not in image_urls:
+            image_urls.append(u)
+
+    # Strategy 2: look for og:image meta tags
+    for m in _re.finditer(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']', html):
+        u = m.group(1)
+        if u not in image_urls:
+            image_urls.append(u)
+
+    if not image_urls:
+        log.warning("HTTP fallback: no image URLs found in page source for @%s", handle)
+        return []
+
+    log.info("HTTP fallback: found %d candidate image URL(s)", len(image_urls))
+    http = requests.Session()
+    http.headers.update(HEADERS)
+    seen: set = set()
+    records: list = []
+    count = 0
+
+    for img_url in image_urls[:max_images * 3]:
+        if len(records) >= max_images:
+            break
+        tmp_file = tmp_dir / f"_igh_{count}.jpg"
+        count += 1
+        if not download_url(img_url, tmp_file, http):
+            continue
+        meta = {
+            "platform": "instagram",
+            "handle": handle,
+            "source_url": f"https://www.instagram.com/{handle}/",
+            "caption": "",
+            "likes": None,
+        }
+        rec = accept_and_dedup(tmp_file, web_dir, seen, meta)
+        if rec:
+            records.append(rec)
+            log.info("  [%d/%d] HTTP fallback saved: %s", len(records), max_images, Path(rec["path"]).name)
+        time.sleep(0.5)
+
+    log.info("HTTP fallback done — %d images.", len(records))
+    return records
 
 def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
     log.info("Instagram: scraping @%s (max %d images) via instaloader", handle, max_images)
@@ -200,23 +282,26 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
     try:
         import instaloader
     except ImportError:
-        log.error("instaloader not installed — run: pip install instaloader")
-        return []
+        log.warning("instaloader not installed — using HTTP fallback")
+        return _scrape_instagram_http(handle, web_dir, tmp_dir, max_images)
 
     try:
         il = _get_instaloader()
     except Exception as e:
-        log.error("Failed to initialise instaloader: %s", e)
-        return []
+        log.warning("Failed to initialise instaloader (%s) — using HTTP fallback", e)
+        return _scrape_instagram_http(handle, web_dir, tmp_dir, max_images)
 
     try:
         profile = instaloader.Profile.from_username(il.context, handle)
     except instaloader.exceptions.ProfileNotExistsException:
         log.error("Instagram profile @%s does not exist", handle)
         return []
+    except instaloader.exceptions.ConnectionException as e:
+        log.warning("instaloader rate-limited or blocked (%s) — using HTTP fallback", e)
+        return _scrape_instagram_http(handle, web_dir, tmp_dir, max_images)
     except Exception as e:
-        log.error("Could not load Instagram profile @%s: %s", handle, e)
-        return []
+        log.warning("Could not load Instagram profile @%s via instaloader (%s) — using HTTP fallback", handle, e)
+        return _scrape_instagram_http(handle, web_dir, tmp_dir, max_images)
 
     seen: set = set()
     records: list = []
@@ -264,8 +349,11 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
                     log.info("  [%d/%d] saved: %s", len(records), max_images, Path(rec["path"]).name)
                 time.sleep(DL_DELAY)
 
-    except instaloader.exceptions.QueryReturnedBadRequestException:
-        log.warning("Instagram rate-limited — got %d images before throttle", len(records))
+    except instaloader.exceptions.ConnectionException as e:
+        log.warning("Instagram rate-limited mid-scrape (%s) — keeping %d images collected so far", e, len(records))
+        if not records:
+            log.info("No images collected before rate-limit — trying HTTP fallback")
+            return _scrape_instagram_http(handle, web_dir, tmp_dir, max_images)
     except Exception as e:
         log.error("Instagram scrape error: %s", e)
 
