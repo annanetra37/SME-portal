@@ -564,7 +564,7 @@ Discovered URLs: facebook="${fbUrl || 'none'}" instagram="${igUrl || 'none'}"
 Search results: ${searchText.slice(0, 4000) || '(using discovery URLs)'}
 
 Rules:
-1. If it has its own website (not fb/ig) → rejected=true, rejectionReason="has website"
+1. If it has its own website (not fb/ig) → set hasWebsite=true but do NOT reject it
 2. If no confirmed FB or IG URL → rejected=true, rejectionReason="no confirmed social URL"
 3. Only use URLs actually seen — in discovery URLs above OR in search results. NEVER construct URLs.
 
@@ -594,7 +594,8 @@ Return ONLY this JSON:
   "noWebsiteReason": "Runs everything through Instagram DMs",
   "opportunityScore": 75,
   "languages": ["local language", "English"],
-  "isIllustrative": false
+  "isIllustrative": false,
+  "hasWebsite": false
 }`,
     2000, ct
   );
