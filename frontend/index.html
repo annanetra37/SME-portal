@@ -77,6 +77,8 @@
     .live-header{font-size:12.5px;color:var(--muted);padding:0 2px 14px;display:flex;align-items:center;gap:8px}
     .badge-v{font-size:9px;padding:2px 7px;border-radius:99px;background:#43e97b18;color:#43e97b;border:1px solid #43e97b30;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
     .badge-i{font-size:9px;padding:2px 7px;border-radius:99px;background:#ff9f4318;color:#ff9f43;border:1px solid #ff9f4330;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+    .badge-web{font-size:9px;padding:2px 7px;border-radius:99px;background:#3b82f618;color:#3b82f6;border:1px solid #3b82f630;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+    .badge-noweb{font-size:9px;padding:2px 7px;border-radius:99px;background:#ef444418;color:#ef4444;border:1px solid #ef444430;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
     @keyframes cardPop{from{opacity:0;transform:translateY(14px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
     .card-new{animation:cardPop .45s cubic-bezier(0.16,1,0.3,1) forwards}
 
@@ -1866,7 +1868,7 @@ function addSmeCard(s) {
     <div class="sme-card-header">
       <div class="sme-avatar">${getEmoji(s.industry)}</div>
       <div style="flex:1;min-width:0">
-        <div class="sme-name">${s.name} <span class="badge-v" title="Verified real business">verified</span></div>
+        <div class="sme-name">${s.name} <span class="badge-v" title="Verified real business">verified</span> ${s.hasWebsite ? '<span class="badge-web" title="Has a website">has website</span>' : '<span class="badge-noweb" title="No website">no website</span>'}</div>
         <div class="sme-type">${s.productType}</div>
       </div>
       <span class="sme-status status-${s.status}">${s.status.replace('_',' ')}</span>
@@ -2015,6 +2017,10 @@ function renderInfoTab(sme) {
       <div class="info-item">
         <div class="info-item-label">Contact Email</div>
         <div class="info-item-value">${sme.contactEmail}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-item-label">Has Website</div>
+        <div class="info-item-value">${sme.hasWebsite ? '<span class="badge-web">yes</span>' : '<span class="badge-noweb">no</span>'}</div>
       </div>
     </div>
 
@@ -2640,6 +2646,7 @@ function openEditSme(smeId) {
   document.getElementById('editFacebook').value = sme.socialMedia?.facebook || '';
   document.getElementById('editInstagram').value = sme.socialMedia?.instagram || '';
   document.getElementById('editWhatsapp').value = sme.socialMedia?.whatsapp || '';
+  document.getElementById('editHasWebsite').checked = sme.hasWebsite || false;
 
   // Populate industry options
   const sel = document.getElementById('editIndustry');
@@ -2665,6 +2672,7 @@ async function saveEditSme() {
     contactEmail:document.getElementById('editEmail').value.trim() || null,
     description: document.getElementById('editDescription').value.trim(),
     socialMedia: { facebook: fb || null, instagram: ig || null, whatsapp: wa || null },
+    hasWebsite: document.getElementById('editHasWebsite').checked,
   };
   try {
     const updated = await api('PUT', `/smes/${id}`, body);
@@ -2757,6 +2765,10 @@ loadCountries();
     <div class="edit-field">
       <label>WhatsApp Number</label>
       <input type="text" id="editWhatsapp" placeholder="+1234567890" />
+    </div>
+    <div class="edit-field" style="flex-direction:row;align-items:center;gap:8px">
+      <input type="checkbox" id="editHasWebsite" style="width:auto;margin:0" />
+      <label for="editHasWebsite" style="margin:0;cursor:pointer">Has Website</label>
     </div>
     <div class="edit-modal-actions">
       <button class="btn btn-primary" onclick="saveEditSme()">Save Changes</button>
