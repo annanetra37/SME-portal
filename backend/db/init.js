@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS smes (
   opportunity_score INT DEFAULT 75,
   languages         JSONB DEFAULT '[]',
   is_illustrative   BOOLEAN DEFAULT FALSE,
+  has_website        BOOLEAN DEFAULT FALSE,
   status            TEXT DEFAULT 'discovered',
   deployed_url      TEXT,
   created_at        TIMESTAMPTZ DEFAULT NOW()
@@ -74,6 +75,12 @@ BEGIN
     WHERE table_name = 'smes' AND column_name = 'is_illustrative'
   ) THEN
     ALTER TABLE smes ADD COLUMN is_illustrative BOOLEAN DEFAULT FALSE;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'smes' AND column_name = 'has_website'
+  ) THEN
+    ALTER TABLE smes ADD COLUMN has_website BOOLEAN DEFAULT FALSE;
   END IF;
 END $$;
 `;
