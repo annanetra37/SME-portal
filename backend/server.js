@@ -1247,6 +1247,14 @@ app.delete('/api/smes/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Manually add a single SME ─────────────────────────────────────────────────
+app.post('/api/countries/:id/smes', async (req, res) => {
+  try {
+    const sme = await insertSme(req.params.id, req.body);
+    res.status(201).json(sme);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── FIX #1: Load SMEs from DB when opening country ───────────────────────────
 app.get('/api/countries/:id/smes', async (req, res) => {
   try {

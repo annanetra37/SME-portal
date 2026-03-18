@@ -236,6 +236,10 @@
     .edit-modal-actions { display:flex; gap:10px; margin-top:20px; }
     .btn-danger { background:#ff6b6b22; color:#ff6b6b; border:1px solid #ff6b6b44; border-radius:8px; padding:8px 16px; cursor:pointer; font-size:13px; font-weight:600; }
     .btn-danger:hover { background:#ff6b6b33; }
+    #addBrandModal { display:none; position:fixed; inset:0; z-index:1000; background:#00000080; align-items:center; justify-content:center; }
+    #addBrandModal.open { display:flex; }
+    .add-brand-cols { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+    .add-brand-cols .edit-field.full-width { grid-column: 1 / -1; }
 
     /* ─── Sidebar ─────────────────────────────────────── */
     .sidebar {
@@ -1498,6 +1502,9 @@ async function showCountryView(country) {
     <button class="btn btn-secondary" onclick="toggleSearchFilters()" id="filtersToggleBtn" title="Search filters">
       ⚙️ Filters
     </button>
+    <button class="btn btn-secondary" onclick="openAddBrandModal()" title="Manually add a new brand">
+      + Add Brand
+    </button>
     <button class="btn btn-primary" onclick="searchSMEs('${country.id}')" id="searchBtn">
       🔍 Search SMEs
     </button>
@@ -2535,6 +2542,59 @@ async function deleteSme(smeId) {
   } catch (e) { toast(`Delete failed: ${e.message}`, 'error'); }
 }
 
+// ─── Add Brand (manual) ─────────────────────────────────
+function openAddBrandModal() {
+  if (!state.currentCountry) return toast('Select a country first', 'error');
+  document.getElementById('addBrandModal').classList.add('open');
+}
+
+function closeAddBrandModal() {
+  document.getElementById('addBrandModal').classList.remove('open');
+}
+
+async function submitAddBrand() {
+  const name = document.getElementById('addBrandName').value.trim();
+  if (!name) return toast('Business name is required', 'error');
+
+  const countryId = state.currentCountry?.id;
+  if (!countryId) return toast('No country selected', 'error');
+
+  const fb = document.getElementById('addBrandFacebook').value.trim();
+  const ig = document.getElementById('addBrandInstagram').value.trim();
+  const wa = document.getElementById('addBrandWhatsapp').value.trim();
+
+  const body = {
+    name,
+    industry:       document.getElementById('addBrandIndustry').value,
+    productType:    document.getElementById('addBrandProductType').value.trim(),
+    description:    document.getElementById('addBrandDescription').value.trim(),
+    location:       document.getElementById('addBrandLocation').value.trim(),
+    ownerName:      document.getElementById('addBrandOwner').value.trim(),
+    contactEmail:   document.getElementById('addBrandEmail').value.trim() || null,
+    socialMedia:    { facebook: fb || null, instagram: ig || null, whatsapp: wa || null },
+    priceRange:     document.getElementById('addBrandPriceRange').value.trim(),
+    monthlyRevenue: document.getElementById('addBrandRevenue').value.trim(),
+    employeeCount:  document.getElementById('addBrandEmployees').value,
+  };
+
+  try {
+    const sme = await api('POST', `/countries/${countryId}/smes`, body);
+    if (!state.smes[countryId]) state.smes[countryId] = [];
+    state.smes[countryId].push(sme);
+    addSmeCard(sme);
+    renderCountryList();
+    updateStats();
+    closeAddBrandModal();
+    toast(`${sme.name} added!`, 'success');
+    // Reset form fields
+    ['addBrandName','addBrandProductType','addBrandLocation','addBrandOwner',
+     'addBrandEmail','addBrandDescription','addBrandFacebook','addBrandInstagram',
+     'addBrandWhatsapp','addBrandPriceRange','addBrandRevenue'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
+  } catch (e) { toast(`Failed to add brand: ${e.message}`, 'error'); }
+}
+
 // ─── Init ──────────────────────────────────────────────
 document.getElementById('topbarTitle').innerHTML = `
   Dashboard
@@ -2591,6 +2651,88 @@ loadCountries();
     <div class="edit-modal-actions">
       <button class="btn btn-primary" onclick="saveEditSme()">Save Changes</button>
       <button class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── ADD BRAND MODAL ─── -->
+<div id="addBrandModal">
+  <div class="edit-modal-box" style="width:600px">
+    <h3>+ Add New Brand</h3>
+    <div class="add-brand-cols">
+      <div class="edit-field">
+        <label>Business Name *</label>
+        <input type="text" id="addBrandName" placeholder="e.g. Bella's Bakery" />
+      </div>
+      <div class="edit-field">
+        <label>Industry *</label>
+        <select id="addBrandIndustry">
+          <option value="Food & Beverage">🍽️ Food & Beverage</option>
+          <option value="Fashion & Clothing">👗 Fashion & Clothing</option>
+          <option value="Beauty & Cosmetics">💄 Beauty & Cosmetics</option>
+          <option value="Crafts & Handmade">🧶 Crafts & Handmade</option>
+          <option value="Jewelry">💍 Jewelry</option>
+          <option value="Home Goods">🏠 Home Goods</option>
+          <option value="Agriculture">🌾 Agriculture</option>
+          <option value="Education">📚 Education</option>
+          <option value="Services">🔧 Services</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="edit-field">
+        <label>Product Type</label>
+        <input type="text" id="addBrandProductType" placeholder="e.g. Artisan pastries" />
+      </div>
+      <div class="edit-field">
+        <label>Location</label>
+        <input type="text" id="addBrandLocation" placeholder="e.g. Yerevan, Armenia" />
+      </div>
+      <div class="edit-field">
+        <label>Owner Name</label>
+        <input type="text" id="addBrandOwner" placeholder="e.g. Bella Sargsyan" />
+      </div>
+      <div class="edit-field">
+        <label>Contact Email</label>
+        <input type="email" id="addBrandEmail" placeholder="e.g. bella@example.com" />
+      </div>
+      <div class="edit-field full-width">
+        <label>Description</label>
+        <textarea id="addBrandDescription" placeholder="Brief description of the business..."></textarea>
+      </div>
+      <div class="edit-field">
+        <label>Facebook URL</label>
+        <input type="url" id="addBrandFacebook" placeholder="https://facebook.com/..." />
+      </div>
+      <div class="edit-field">
+        <label>Instagram URL</label>
+        <input type="url" id="addBrandInstagram" placeholder="https://instagram.com/..." />
+      </div>
+      <div class="edit-field">
+        <label>WhatsApp Number</label>
+        <input type="text" id="addBrandWhatsapp" placeholder="+1234567890" />
+      </div>
+      <div class="edit-field">
+        <label>Price Range</label>
+        <input type="text" id="addBrandPriceRange" placeholder="e.g. $5-$25" />
+      </div>
+      <div class="edit-field">
+        <label>Monthly Revenue</label>
+        <input type="text" id="addBrandRevenue" placeholder="e.g. $500-$2000" />
+      </div>
+      <div class="edit-field">
+        <label>Employee Count</label>
+        <select id="addBrandEmployees">
+          <option value="1-5">1-5</option>
+          <option value="5-10">5-10</option>
+          <option value="10-25">10-25</option>
+          <option value="25-50">25-50</option>
+          <option value="50+">50+</option>
+        </select>
+      </div>
+    </div>
+    <div class="edit-modal-actions">
+      <button class="btn btn-primary" onclick="submitAddBrand()">Add Brand</button>
+      <button class="btn btn-secondary" onclick="closeAddBrandModal()">Cancel</button>
     </div>
   </div>
 </div>
