@@ -14,7 +14,7 @@ Output:
     {output_dir}/results.json — metadata list consumed by Node.js
 """
 
-import os, re, sys, json, shutil, hashlib, logging, argparse, mimetypes, time
+import os, re, sys, json, shutil, hashlib, logging, argparse, mimetypes, time, random
 from pathlib import Path
 from datetime import datetime
 
@@ -39,16 +39,72 @@ log = logging.getLogger("scraper")
 MIN_WIDTH    = 400
 MIN_HEIGHT   = 400
 MIN_SIZE     = 20_000   # bytes
-DL_DELAY     = 1.2      # seconds between downloads
 SESSION_FILE = Path("/tmp/.instagram_session.json")
 
+# ── Rate-limiting configuration ──────────────────────────────────────────────
+DL_DELAY_MIN     = 2.0       # minimum seconds between downloads
+DL_DELAY_MAX     = 5.0       # maximum seconds between downloads
+BATCH_SIZE       = 5         # number of requests before a cooldown pause
+BATCH_COOLDOWN   = (10, 20)  # cooldown range (seconds) after each batch
+BACKOFF_BASE     = 5.0       # base seconds for exponential backoff
+BACKOFF_MAX      = 120.0     # maximum backoff delay in seconds
+MAX_RETRIES      = 3         # retries per request on rate-limit / transient errors
+
+_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+]
+
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    )
+    "User-Agent": random.choice(_USER_AGENTS),
 }
+
+
+# ── Rate-limit helpers ───────────────────────────────────────────────────────
+
+def _random_delay():
+    """Sleep for a randomised interval between downloads (human-like jitter)."""
+    delay = random.uniform(DL_DELAY_MIN, DL_DELAY_MAX)
+    log.debug("Rate-limit: sleeping %.1fs", delay)
+    time.sleep(delay)
+
+
+def _batch_cooldown(request_count: int):
+    """After every BATCH_SIZE requests, take a longer cooldown pause."""
+    if request_count > 0 and request_count % BATCH_SIZE == 0:
+        cooldown = random.uniform(*BATCH_COOLDOWN)
+        log.info("Rate-limit: batch cooldown — pausing %.0fs after %d requests", cooldown, request_count)
+        time.sleep(cooldown)
+
+
+def _with_backoff(fn, *args, label: str = "request", **kwargs):
+    """Call *fn* with exponential backoff on transient / rate-limit errors.
+
+    Returns the result of *fn*, or re-raises after MAX_RETRIES failures.
+    """
+    last_err = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            last_err = exc
+            err_str = str(exc).lower()
+            is_rate_limit = any(kw in err_str for kw in (
+                "rate limit", "429", "too many", "please wait",
+                "challenge_required", "login_required", "checkpoint",
+            ))
+            if not is_rate_limit and attempt == 1:
+                raise  # not a transient error — fail fast
+            delay = min(BACKOFF_BASE * (2 ** (attempt - 1)) + random.uniform(0, 2), BACKOFF_MAX)
+            log.warning(
+                "Rate-limit: %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                label, attempt, MAX_RETRIES, exc, delay,
+            )
+            time.sleep(delay)
+    raise last_err  # type: ignore[misc]
 
 # ── instagrapi monkey-patch ───────────────────────────────────────────────────
 # Older instagrapi versions crash with KeyError('pinned_channels_info') because
@@ -157,7 +213,7 @@ def get_ig_client():
         raise RuntimeError("instagrapi not installed — run: pip install instagrapi")
 
     cl = Client()
-    cl.delay_range = [1, 3]
+    cl.delay_range = [3, 7]  # wider delay range to appear more human-like
 
     session_id = os.getenv("IG_SESSION")
     username   = os.getenv("IG_USERNAME")
@@ -210,31 +266,34 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
         return []
 
     try:
-        user_id = cl.user_id_from_username(handle)
+        user_id = _with_backoff(cl.user_id_from_username, handle, label="user_id_lookup")
     except Exception as e:
         log.error("Could not resolve Instagram user ID: %s", e)
         return []
 
     try:
-        medias = cl.user_medias(user_id, amount=max_images * 2)  # fetch extra, filter after
+        medias = _with_backoff(cl.user_medias, user_id, max_images * 2, label="user_medias")
     except Exception as e:
         log.error("Failed to fetch Instagram media: %s", e)
         return []
 
     seen: set = set()
     records: list = []
+    request_count = 0
 
     for media in medias:
         if len(records) >= max_images:
             break
         paths = []
         try:
+            request_count += 1
+            _batch_cooldown(request_count)
             if media.media_type == 1:       # photo
-                p = cl.photo_download(media.pk, folder=str(tmp_dir))
+                p = _with_backoff(cl.photo_download, media.pk, str(tmp_dir), label=f"photo_{media.pk}")
                 if p:
                     paths.append(Path(p))
             elif media.media_type == 8:     # carousel
-                ps = cl.album_download(media.pk, folder=str(tmp_dir))
+                ps = _with_backoff(cl.album_download, media.pk, str(tmp_dir), label=f"album_{media.pk}")
                 paths.extend([Path(p) for p in (ps or [])])
         except Exception as e:
             log.warning("Skipping post %s: %s", media.pk, e)
@@ -254,7 +313,7 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
             if rec:
                 records.append(rec)
                 log.info("  [%d/%d] saved: %s", len(records), max_images, Path(rec["path"]).name)
-            time.sleep(DL_DELAY)
+            _random_delay()
 
     log.info("Instagram done — %d images.", len(records))
     return records
@@ -281,10 +340,11 @@ def scrape_facebook(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) 
         kwargs["cookies"] = cookies
 
     http = requests.Session()
-    http.headers.update(HEADERS)
+    http.headers.update({"User-Agent": random.choice(_USER_AGENTS)})
     seen: set = set()
     records: list = []
     count = 0
+    request_count = 0
 
     try:
         for post in get_posts(handle, **kwargs):
@@ -294,6 +354,8 @@ def scrape_facebook(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) 
             for url in urls:
                 if len(records) >= max_images:
                     break
+                request_count += 1
+                _batch_cooldown(request_count)
                 tmp_file = tmp_dir / f"_fb_{count}.jpg"
                 count += 1
                 if not download_url(url, tmp_file, http):
@@ -309,7 +371,7 @@ def scrape_facebook(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) 
                 if rec:
                     records.append(rec)
                     log.info("  [%d/%d] saved: %s", len(records), max_images, Path(rec["path"]).name)
-                time.sleep(DL_DELAY)
+                _random_delay()
     except Exception as e:
         log.error("facebook-scraper error: %s", e)
 
