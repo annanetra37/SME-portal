@@ -1167,39 +1167,36 @@ ${designGuide}
   let html;
 
   if (logFn) {
-    // Streaming mode with adaptive thinking — Claude plans the design first, then writes better HTML
-    logFn(`Sending request to Claude with adaptive thinking (up to ${MAX_TOKENS} tokens)…`, 'info');
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: MAX_TOKENS,
-      thinking: { type: 'adaptive' },
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
+    // Streaming mode — send live progress updates during generation
+    logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
 
-    html = '';
-    let lastLogAt = Date.now();
-    let thinkingLogged = false;
+    await withRetry(async () => {
+      html = '';
+      const stream = anthropic.messages.stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: MAX_TOKENS,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
 
-    stream.on('text', (text) => {
-      if (!thinkingLogged) {
-        logFn(`Claude finished planning — now generating HTML…`, 'info');
-        thinkingLogged = true;
-      }
-      html += text;
-      const now = Date.now();
-      if (now - lastLogAt > 2500) {
-        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
-        lastLogAt = now;
-      }
-    });
+      let lastLogAt = Date.now();
 
-    await stream.finalMessage().then(msg => {
-      if (ct && msg.usage) {
-        ct.inputTokens  += msg.usage.input_tokens  || 0;
-        ct.outputTokens += msg.usage.output_tokens || 0;
-      }
-    });
+      stream.on('text', (text) => {
+        html += text;
+        const now = Date.now();
+        if (now - lastLogAt > 2500) {
+          logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
+          lastLogAt = now;
+        }
+      });
+
+      await stream.finalMessage().then(msg => {
+        if (ct && msg.usage) {
+          ct.inputTokens  += msg.usage.input_tokens  || 0;
+          ct.outputTokens += msg.usage.output_tokens || 0;
+        }
+      });
+    }, 'buildHtml-stream');
 
     logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
   } else {
