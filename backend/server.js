@@ -1196,6 +1196,10 @@ ${designGuide}
     html = html.replaceAll(`{{IMG_${i}}}`, dataUri);
   });
 
+  // Inject Google Analytics tracking tag into <head>
+  const gaTag = `<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-87YZHB9TR1"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', 'G-87YZHB9TR1');\n</script>`;
+  html = html.replace(/<head>/i, `<head>\n${gaTag}`);
+
   return html;
 }
 
