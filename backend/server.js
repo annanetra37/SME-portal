@@ -583,7 +583,7 @@ async function verifyAndEnrich(candidate, countryName, ct = null) {
     ).catch(() => '');
   }
 
-  const raw = await claude(
+  const raw = await claudeHaiku(
     'Business verifier. Return ONLY valid JSON. Never fabricate URLs.',
     `Verify and profile this potential social-media-only SME.
 
@@ -795,8 +795,8 @@ async function scrapeSocialContent(sme, ct = null) {
     .join('\n\n===\n\n')
     .slice(0, 16000);
 
-  // Extract structured content from scraped data
-  const extracted = await claude(
+  // Extract structured content from scraped data (Haiku — structured extraction task)
+  const extracted = await claudeHaiku(
     'You extract social media business content. Return ONLY valid JSON.',
     `Extract real content for this business from the search results below.
 
@@ -1155,17 +1155,26 @@ ${designGuide}
   let html;
 
   if (logFn) {
-    // Streaming mode — send live progress updates during generation
-    logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
+    // Streaming mode with extended thinking — Claude plans the design first, then writes better HTML
+    logFn(`Sending request to Claude with extended thinking (up to ${MAX_TOKENS} tokens)…`, 'info');
     const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: MAX_TOKENS,
+      thinking: { type: 'enabled', budget_tokens: 10000 },
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
     });
 
     html = '';
     let lastLogAt = Date.now();
+    let thinkingDone = false;
+
+    stream.on('thinking', () => {
+      if (!thinkingDone) {
+        logFn(`Claude is planning the website design…`, 'info');
+        thinkingDone = true;
+      }
+    });
 
     stream.on('text', (text) => {
       html += text;
