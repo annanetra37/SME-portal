@@ -44,10 +44,11 @@ async function ensureSchema() {
       followers JSONB DEFAULT '{}', products JSONB DEFAULT '[]', price_range TEXT,
       tags JSONB DEFAULT '[]', no_website_reason TEXT, opportunity_score INT DEFAULT 75,
       languages JSONB DEFAULT '[]', status TEXT DEFAULT 'discovered', deployed_url TEXT,
-      notes TEXT DEFAULT '',
+      notes TEXT DEFAULT '', is_manual BOOLEAN DEFAULT FALSE,
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
     ALTER TABLE smes ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+    ALTER TABLE smes ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE;
     CREATE TABLE IF NOT EXISTS websites (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       sme_id UUID NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
@@ -282,25 +283,25 @@ function normalizeSme(row) {
     priceRange: row.price_range, tags: p(row.tags) || [],
     noWebsiteReason: row.no_website_reason, opportunityScore: row.opportunity_score,
     languages: p(row.languages) || [], status: row.status,
-    notes: row.notes || '',
+    notes: row.notes || '', isManual: row.is_manual || false,
     isIllustrative: row.is_illustrative || false, createdAt: row.created_at,
   };
 }
 
-async function insertSme(countryId, s) {
+async function insertSme(countryId, s, { isManual = false } = {}) {
   const { rows } = await pool.query(
     `INSERT INTO smes (country_id,name,industry,product_type,description,location,
       founded_year,employee_count,monthly_revenue,social_media,contact_email,owner_name,
       followers,products,price_range,tags,no_website_reason,opportunity_score,
-      languages,is_illustrative,status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,'discovered')
+      languages,is_illustrative,is_manual,status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'discovered')
      RETURNING *`,
     [countryId, s.name, s.industry || 'General', s.productType || '', s.description || '',
      s.location || '', s.foundedYear || null, s.employeeCount || '1-5', s.monthlyRevenue || 'Unknown',
      JSON.stringify(s.socialMedia || {}), s.contactEmail || null, s.ownerName || '',
      JSON.stringify(s.followers || {}), JSON.stringify(s.products || []), s.priceRange || '',
      JSON.stringify(s.tags || []), s.noWebsiteReason || '', s.opportunityScore || 75,
-     JSON.stringify(s.languages || []), s.isIllustrative || false]
+     JSON.stringify(s.languages || []), s.isIllustrative || false, isManual]
   );
   return normalizeSme(rows[0]);
 }
@@ -1283,7 +1284,7 @@ app.delete('/api/smes/:id', async (req, res) => {
 app.post('/api/countries/:id/smes', async (req, res) => {
   console.log(`📝 Manual brand add: "${req.body.name}" → country ${req.params.id}`);
   try {
-    const sme = await insertSme(req.params.id, req.body);
+    const sme = await insertSme(req.params.id, req.body, { isManual: true });
     console.log(`✅ Brand added: ${sme.name} (${sme.id})`);
     res.status(201).json(sme);
   } catch (e) {
