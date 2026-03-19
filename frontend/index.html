@@ -1542,9 +1542,10 @@ async function showCountryView(country) {
         const site = await api('GET', `/smes/${s.id}/website`);
         state.websites[s.id] = site;
       } catch {}
+      // Silently try email — no toast on 404
       try {
-        const email = await api('GET', `/smes/${s.id}/email`);
-        if (email?.subject) state.emails[s.id] = email;
+        const r = await fetch(`${API}/smes/${s.id}/email`);
+        if (r.ok) { const email = await r.json(); if (email?.subject) state.emails[s.id] = email; }
       } catch {}
     }));
     renderCountryList();
@@ -1570,9 +1571,10 @@ async function loadCountries() {
             const site = await api('GET', `/smes/${s.id}/website`);
             state.websites[s.id] = site;
           } catch {}
+          // Silently try email — no toast on 404
           try {
-            const email = await api('GET', `/smes/${s.id}/email`);
-            if (email?.subject) state.emails[s.id] = email;
+            const r = await fetch(`${API}/smes/${s.id}/email`);
+            if (r.ok) { const email = await r.json(); if (email?.subject) state.emails[s.id] = email; }
           } catch {}
         }));
       } catch {}
@@ -2206,8 +2208,8 @@ async function buildWebsite(smeId) {
   });
 
   es.addEventListener('done', async e => {
+    buildDone = true;   // MUST be set before es.close() to prevent race with error handler
     es.close();
-    buildDone = true;
     const data = JSON.parse(e.data);
     buildCost = data.cost || null;
     if (buildCost) addCost(buildCost);
@@ -2389,8 +2391,8 @@ async function deploySite(smeId) {
   });
 
   es.addEventListener('deploy-done', async e => {
-    es.close();
     deployDone = true;
+    es.close();
     const { url, repoUrl } = JSON.parse(e.data);
 
     finalizeBuildTerminal(smeId, true);
