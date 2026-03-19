@@ -1249,10 +1249,15 @@ app.delete('/api/smes/:id', async (req, res) => {
 
 // ── Manually add a single SME ─────────────────────────────────────────────────
 app.post('/api/countries/:id/smes', async (req, res) => {
+  console.log(`📝 Manual brand add: "${req.body.name}" → country ${req.params.id}`);
   try {
     const sme = await insertSme(req.params.id, req.body);
+    console.log(`✅ Brand added: ${sme.name} (${sme.id})`);
     res.status(201).json(sme);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('❌ Brand add failed:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ── FIX #1: Load SMEs from DB when opening country ───────────────────────────
