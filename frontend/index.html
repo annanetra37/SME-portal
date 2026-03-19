@@ -555,9 +555,23 @@
 
     .status-discovered { background: #7878a020; color: var(--muted); }
     .status-contacted { background: #00d4ff20; color: #00d4ff; }
+    .status-customer_converted { background: #43e97b20; color: var(--success); }
     .status-website_built { background: #6c63ff20; color: var(--accent); }
     .status-deployed { background: #43e97b20; color: var(--success); }
     .status-email_ready { background: #ffd16620; color: var(--warning); }
+
+    .sme-card-actions { display:flex; gap:6px; padding-top:10px; border-top:1px solid var(--border); margin-top:10px; }
+    .sme-card-actions button { font-size:11px; padding:4px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--muted); cursor:pointer; transition:all .2s; }
+    .sme-card-actions button:hover { background:#22224a; border-color:var(--accent); color:var(--text); }
+    .sme-card-actions button.active-status { background:#43e97b18; border-color:#43e97b44; color:var(--success); }
+
+    .notes-section { margin-top:16px; }
+    .notes-section .notes-label { font-size:12px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+    .notes-section textarea { width:100%; box-sizing:border-box; min-height:100px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font-size:13px; padding:10px 12px; outline:none; resize:vertical; font-family:'DM Sans',sans-serif; line-height:1.6; }
+    .notes-section textarea:focus { border-color:var(--accent); }
+    .notes-section .notes-save { margin-top:8px; display:flex; justify-content:flex-end; }
+    .notes-section .notes-saved { font-size:11px; color:var(--success); opacity:0; transition:opacity .3s; }
+    .notes-section .notes-saved.show { opacity:1; }
 
     .sme-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
     .tag { font-size: 11px; padding: 3px 9px; border-radius: 99px; background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
@@ -1785,6 +1799,14 @@ function addSmeCard(s) {
       ${s.socialMedia?.instagram ? `<span class="social-pill">📸 Instagram</span>` : ''}
       ${s.socialMedia?.whatsapp  ? `<span class="social-pill">💬 WhatsApp</span>`  : ''}
       ${!s.socialMedia?.facebook&&!s.socialMedia?.instagram?`<span style="font-size:11px;color:var(--muted)">No verified links</span>`:''}
+    </div>
+    <div class="sme-card-actions" onclick="event.stopPropagation()">
+      <button onclick="quickSetStatus('${s.id}','contacted')" ${s.status==='contacted'?'class="active-status"':''}  title="Mark as contacted">
+        ${s.status==='contacted' ? '✅ Contacted' : '📞 Contacted'}
+      </button>
+      <button onclick="quickSetStatus('${s.id}','customer_converted')" ${s.status==='customer_converted'?'class="active-status"':''} title="Mark as customer converted">
+        ${s.status==='customer_converted' ? '✅ Converted' : '🤝 Converted'}
+      </button>
     </div>`;
   grid.appendChild(div);
 }
@@ -1856,9 +1878,13 @@ function renderDetailActions(sme) {
   const hasSocial = !!(sme.socialMedia?.instagram || sme.socialMedia?.facebook);
 
   const isContacted = sme.status === 'contacted';
+  const isConverted = sme.status === 'customer_converted';
   document.getElementById('detailActions').innerHTML = `
-    <button class="btn ${isContacted ? 'btn-success' : 'btn-secondary'} btn-sm" onclick="toggleContacted('${sme.id}')" id="contactBtn-${sme.id}" title="${isContacted ? 'Move back to Discovered' : 'Mark as Contacted'}">
-      ${isContacted ? '✅ Contacted' : '📞 Mark Contacted'}
+    <button class="btn ${isContacted ? 'btn-success' : 'btn-secondary'} btn-sm" onclick="quickSetStatus('${sme.id}','contacted')" title="${isContacted ? 'Undo contacted' : 'Mark as Contacted'}">
+      ${isContacted ? '✅ Contacted' : '📞 Contacted'}
+    </button>
+    <button class="btn ${isConverted ? 'btn-success' : 'btn-secondary'} btn-sm" onclick="quickSetStatus('${sme.id}','customer_converted')" title="${isConverted ? 'Undo converted' : 'Mark as Customer Converted'}">
+      ${isConverted ? '✅ Converted' : '🤝 Converted'}
     </button>
     <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')" id="buildBtn-${sme.id}">
       ${hasWebsite ? '🔄 Rebuild' : '🔨 Build Website'}
@@ -1973,6 +1999,17 @@ function renderInfoTab(sme) {
       <div class="info-item-label" style="margin-bottom:6px">Why No Website</div>
       <p style="font-size:14px;color:var(--muted);font-style:italic">"${sme.noWebsiteReason}"</p>
     </div>
+
+    ${['contacted','customer_converted'].includes(sme.status) ? `
+      <hr class="divider" />
+      <div class="notes-section">
+        <div class="notes-label">
+          📝 Notes
+          <span class="notes-saved" id="notesSaved-${sme.id}">Saved!</span>
+        </div>
+        <textarea id="notes-${sme.id}" placeholder="Add notes about this ${sme.status === 'contacted' ? 'contact' : 'customer'}... (tailored requests, process details, follow-up actions, etc.)" oninput="onNotesInput('${sme.id}')">${sme.notes || ''}</textarea>
+      </div>
+    ` : ''}
   `;
 }
 
@@ -2416,15 +2453,14 @@ async function generateEmail(smeId) {
 function renderPipeline() {
   const allSMEs = Object.values(state.smes).flat();
   const stages = [
-    { key: 'discovered', label: 'Discovered', color: '#7878a0' },
-    { key: 'contacted', label: 'Contacted', color: '#00d4ff' },
-    { key: 'website_built', label: 'Website Built', color: '#6c63ff' },
-    { key: 'deployed', label: 'Deployed', color: '#43e97b' },
-    { key: 'email_ready', label: 'Email Ready', color: '#ffd166' },
+    { key: 'discovered', label: 'Discovered', color: '#7878a0', match: ['discovered'] },
+    { key: 'website_built', label: 'Website Built', color: '#6c63ff', match: ['website_built', 'deployed', 'email_ready'] },
+    { key: 'contacted', label: 'Contacted', color: '#00d4ff', match: ['contacted'] },
+    { key: 'customer_converted', label: 'Customer Converted', color: '#43e97b', match: ['customer_converted'] },
   ];
 
   document.getElementById('pipelineBoard').innerHTML = stages.map(stage => {
-    const items = allSMEs.filter(s => s.status === stage.key);
+    const items = allSMEs.filter(s => stage.match.includes(s.status));
     return `
       <div class="pipeline-col">
         <div class="pipeline-col-header">
@@ -2468,8 +2504,8 @@ function downloadHtml(smeId, smeName) {
   a.click();
 }
 
-// ─── SME Status Toggle (Contacted) ─────────────────────
-async function toggleContacted(smeId) {
+// ─── SME Status Toggle ─────────────────────────────────
+async function quickSetStatus(smeId, targetStatus) {
   let sme = null;
   for (const list of Object.values(state.smes)) {
     sme = list.find(s => s.id === smeId);
@@ -2477,24 +2513,52 @@ async function toggleContacted(smeId) {
   }
   if (!sme) return;
 
-  const newStatus = sme.status === 'contacted' ? 'discovered' : 'contacted';
+  // Toggle: clicking same status reverts to discovered
+  const newStatus = sme.status === targetStatus ? 'discovered' : targetStatus;
   try {
     const updated = await api('PUT', `/smes/${smeId}/status`, { status: newStatus });
-    // Update local state
     for (const list of Object.values(state.smes)) {
       const idx = list.findIndex(s => s.id === smeId);
       if (idx !== -1) { list[idx] = updated; break; }
     }
-    state.currentSme = updated;
-    renderDetailActions(updated);
-    renderInfoTab(updated);
-    // Refresh the card in the grid
+    // Refresh card in grid
     const card = document.querySelector(`[data-sme-id="${smeId}"]`);
     if (card) card.remove();
     addSmeCard(updated);
+    // Refresh detail panel if open
+    if (state.currentSme?.id === smeId) {
+      state.currentSme = updated;
+      renderDetailActions(updated);
+      renderInfoTab(updated);
+    }
     updateStats();
-    toast(newStatus === 'contacted' ? '📞 Marked as contacted' : 'Moved back to discovered', 'success');
+    const labels = { contacted: '📞 Contacted', customer_converted: '🤝 Customer Converted', discovered: 'Discovered' };
+    toast(`${labels[newStatus] || newStatus}`, 'success');
   } catch (e) { toast(`Status update failed: ${e.message}`, 'error'); }
+}
+
+// ─── Notes (for contacted / converted) ─────────────────
+async function saveNotes(smeId) {
+  const textarea = document.getElementById(`notes-${smeId}`);
+  if (!textarea) return;
+  const notes = textarea.value;
+  try {
+    const updated = await api('PUT', `/smes/${smeId}/notes`, { notes });
+    for (const list of Object.values(state.smes)) {
+      const idx = list.findIndex(s => s.id === smeId);
+      if (idx !== -1) { list[idx] = updated; break; }
+    }
+    if (state.currentSme?.id === smeId) state.currentSme = updated;
+    // Show saved indicator
+    const indicator = document.getElementById(`notesSaved-${smeId}`);
+    if (indicator) { indicator.classList.add('show'); setTimeout(() => indicator.classList.remove('show'), 2000); }
+  } catch (e) { toast(`Failed to save notes: ${e.message}`, 'error'); }
+}
+
+let _notesDebounce = {};
+function onNotesInput(smeId) {
+  clearTimeout(_notesDebounce[smeId]);
+  _notesDebounce[smeId] = setTimeout(() => saveNotes(smeId), 800);
 }
 
 // ─── SME Edit / Delete ─────────────────────────────────

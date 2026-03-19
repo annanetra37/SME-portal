@@ -44,8 +44,10 @@ async function ensureSchema() {
       followers JSONB DEFAULT '{}', products JSONB DEFAULT '[]', price_range TEXT,
       tags JSONB DEFAULT '[]', no_website_reason TEXT, opportunity_score INT DEFAULT 75,
       languages JSONB DEFAULT '[]', status TEXT DEFAULT 'discovered', deployed_url TEXT,
+      notes TEXT DEFAULT '',
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
+    ALTER TABLE smes ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
     CREATE TABLE IF NOT EXISTS websites (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       sme_id UUID NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
@@ -280,6 +282,7 @@ function normalizeSme(row) {
     priceRange: row.price_range, tags: p(row.tags) || [],
     noWebsiteReason: row.no_website_reason, opportunityScore: row.opportunity_score,
     languages: p(row.languages) || [], status: row.status,
+    notes: row.notes || '',
     isIllustrative: row.is_illustrative || false, createdAt: row.created_at,
   };
 }
@@ -1241,7 +1244,7 @@ app.put('/api/smes/:id', async (req, res) => {
 
 // ── Update SME status manually ────────────────────────────────────────────────
 app.put('/api/smes/:id/status', async (req, res) => {
-  const allowed = ['discovered', 'contacted', 'website_built', 'deployed', 'email_ready'];
+  const allowed = ['discovered', 'contacted', 'customer_converted', 'website_built', 'deployed', 'email_ready'];
   const { status } = req.body;
   if (!status || !allowed.includes(status)) {
     return res.status(400).json({ error: `Invalid status. Allowed: ${allowed.join(', ')}` });
@@ -1252,6 +1255,18 @@ app.put('/api/smes/:id/status', async (req, res) => {
     );
     if (!rows[0]) return res.status(404).json({ error: 'SME not found' });
     console.log(`📞 Status updated: ${rows[0].name} → ${status}`);
+    res.json(normalizeSme(rows[0]));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Update SME notes ──────────────────────────────────────────────────────────
+app.put('/api/smes/:id/notes', async (req, res) => {
+  try {
+    const { notes } = req.body;
+    const { rows } = await pool.query(
+      'UPDATE smes SET notes=$1 WHERE id=$2 RETURNING *', [notes || '', req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'SME not found' });
     res.json(normalizeSme(rows[0]));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
