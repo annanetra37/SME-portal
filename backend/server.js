@@ -153,7 +153,7 @@ app.get('/api/smes/:id/build-stream', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-  const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch (_) { clearInterval(hb); } }, 20000);
+  const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch (_) { clearInterval(hb); } }, 10000);
   smeSseClients.set(String(req.params.id), res);
   req.on('close', () => { clearInterval(hb); smeSseClients.delete(String(req.params.id)); });
 });
@@ -1169,34 +1169,31 @@ ${designGuide}
   if (logFn) {
     // Streaming mode — send live progress updates during generation
     logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: MAX_TOKENS,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
 
-    await withRetry(async () => {
-      html = '';
-      const stream = anthropic.messages.stream({
-        model: 'claude-sonnet-4-6',
-        max_tokens: MAX_TOKENS,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      });
+    html = '';
+    let lastLogAt = Date.now();
 
-      let lastLogAt = Date.now();
+    stream.on('text', (text) => {
+      html += text;
+      const now = Date.now();
+      if (now - lastLogAt > 2500) {
+        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
+        lastLogAt = now;
+      }
+    });
 
-      stream.on('text', (text) => {
-        html += text;
-        const now = Date.now();
-        if (now - lastLogAt > 2500) {
-          logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
-          lastLogAt = now;
-        }
-      });
-
-      await stream.finalMessage().then(msg => {
-        if (ct && msg.usage) {
-          ct.inputTokens  += msg.usage.input_tokens  || 0;
-          ct.outputTokens += msg.usage.output_tokens || 0;
-        }
-      });
-    }, 'buildHtml-stream');
+    await stream.finalMessage().then(msg => {
+      if (ct && msg.usage) {
+        ct.inputTokens  += msg.usage.input_tokens  || 0;
+        ct.outputTokens += msg.usage.output_tokens || 0;
+      }
+    });
 
     logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
   } else {
