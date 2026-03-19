@@ -238,8 +238,10 @@
     .btn-danger:hover { background:#ff6b6b33; }
     #addBrandModal { display:none; position:fixed; inset:0; z-index:1000; background:#00000080; align-items:center; justify-content:center; }
     #addBrandModal.open { display:flex; }
-    #addBrandModal .edit-modal-box { display:flex; flex-direction:column; padding-bottom:0; }
+    #addBrandModal .edit-modal-box { display:flex; flex-direction:column; padding-bottom:0; overflow-y:hidden; }
     #addBrandModal .add-brand-scroll { flex:1; overflow-y:auto; min-height:0; padding-bottom:4px; }
+    #addBrandModal .add-brand-scroll::-webkit-scrollbar { width:4px; }
+    #addBrandModal .add-brand-scroll::-webkit-scrollbar-thumb { background:#2a2a45; border-radius:3px; }
     #addBrandModal .add-brand-actions { padding:16px 0 28px; border-top:1px solid var(--border); margin-top:8px; display:flex; gap:10px; flex-shrink:0; }
     .add-brand-cols { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
     .add-brand-cols .edit-field.full-width { grid-column: 1 / -1; }
@@ -2556,6 +2558,7 @@ function closeAddBrandModal() {
 }
 
 async function submitAddBrand() {
+  console.log('[AddBrand] submitAddBrand() called');
   const name = document.getElementById('addBrandName').value.trim();
   if (!name) return toast('Business name is required', 'error');
 
@@ -2580,11 +2583,15 @@ async function submitAddBrand() {
     employeeCount:  document.getElementById('addBrandEmployees').value,
   };
 
+  console.log('[AddBrand] Sending to server:', body);
   try {
     const sme = await api('POST', `/countries/${countryId}/smes`, body);
+    console.log('[AddBrand] Server response:', sme);
     if (!state.smes[countryId]) state.smes[countryId] = [];
     state.smes[countryId].push(sme);
     addSmeCard(sme);
+    // Clear "no SMEs" empty state if this is the first brand
+    document.getElementById('smeEmpty').innerHTML = '';
     renderCountryList();
     updateStats();
     closeAddBrandModal();
@@ -2595,7 +2602,10 @@ async function submitAddBrand() {
      'addBrandWhatsapp','addBrandPriceRange','addBrandRevenue'].forEach(id => {
       document.getElementById(id).value = '';
     });
-  } catch (e) { toast(`Failed to add brand: ${e.message}`, 'error'); }
+  } catch (e) {
+    console.error('[AddBrand] Error:', e);
+    toast(`Failed to add brand: ${e.message}`, 'error');
+  }
 }
 
 // ─── Init ──────────────────────────────────────────────
