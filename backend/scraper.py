@@ -48,7 +48,7 @@ BATCH_SIZE       = 5         # number of requests before a cooldown pause
 BATCH_COOLDOWN   = (10, 20)  # cooldown range (seconds) after each batch
 BACKOFF_BASE     = 5.0       # base seconds for exponential backoff
 BACKOFF_MAX      = 120.0     # maximum backoff delay in seconds
-MAX_RETRIES      = 3         # retries per request on rate-limit / transient errors
+MAX_RETRIES      = 4         # retries per request on rate-limit / transient errors
 
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -80,10 +80,35 @@ def _batch_cooldown(request_count: int):
         time.sleep(cooldown)
 
 
+_RETRYABLE_KEYWORDS = (
+    "rate limit", "rate_limit", "ratelimit",
+    "429", "too many", "please wait",
+    "challenge_required", "challenge required", "challengerequired",
+    "login_required", "login required", "loginrequired",
+    "checkpoint", "checkpoint_required",
+    "401", "unauthorized",
+    "feedback_required", "feedbackrequired",
+    "consent_required",
+    "temporarily blocked",
+)
+
+# Instagram client reference — set during scrape, used by _with_backoff to re-auth
+_ig_client = None
+
+def _is_retryable(exc):
+    """Check if an exception is a transient/auth error worth retrying."""
+    err_str = str(exc).lower()
+    class_name = type(exc).__name__.lower()
+    combined = f"{class_name}: {err_str}"
+    return any(kw in combined for kw in _RETRYABLE_KEYWORDS)
+
+
 def _with_backoff(fn, *args, label: str = "request", **kwargs):
     """Call *fn* with exponential backoff on transient / rate-limit errors.
 
-    Returns the result of *fn*, or re-raises after MAX_RETRIES failures.
+    On auth errors (401/LoginRequired), attempts to refresh the Instagram
+    session before retrying.  Returns the result of *fn*, or re-raises after
+    MAX_RETRIES failures.
     """
     last_err = None
     for attempt in range(1, MAX_RETRIES + 1):
@@ -91,16 +116,29 @@ def _with_backoff(fn, *args, label: str = "request", **kwargs):
             return fn(*args, **kwargs)
         except Exception as exc:
             last_err = exc
-            err_str = str(exc).lower()
-            is_rate_limit = any(kw in err_str for kw in (
-                "rate limit", "429", "too many", "please wait",
-                "challenge_required", "login_required", "checkpoint",
-            ))
-            if not is_rate_limit and attempt == 1:
+            retryable = _is_retryable(exc)
+            if not retryable and attempt == 1:
                 raise  # not a transient error — fail fast
+
+            # On auth errors, try to refresh the session
+            err_lower = f"{type(exc).__name__}: {exc}".lower()
+            is_auth = any(kw in err_lower for kw in ("login", "401", "unauthorized"))
+            if is_auth and _ig_client:
+                log.warning("Auth error detected — attempting session refresh…")
+                try:
+                    _ig_client.get_timeline_feed()  # poke session
+                except Exception:
+                    try:
+                        session_id = os.getenv("IG_SESSION")
+                        if session_id:
+                            _ig_client.login_by_sessionid(session_id)
+                            log.info("Session refreshed successfully.")
+                    except Exception as re_err:
+                        log.warning("Session refresh failed: %s", re_err)
+
             delay = min(BACKOFF_BASE * (2 ** (attempt - 1)) + random.uniform(0, 2), BACKOFF_MAX)
             log.warning(
-                "Rate-limit: %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                "Retryable error: %s failed (attempt %d/%d): %s — retrying in %.0fs",
                 label, attempt, MAX_RETRIES, exc, delay,
             )
             time.sleep(delay)
@@ -257,10 +295,12 @@ def get_ig_client():
     return cl
 
 def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int) -> list[dict]:
+    global _ig_client
     log.info("Instagram: scraping @%s (max %d images)", handle, max_images)
 
     try:
         cl = get_ig_client()
+        _ig_client = cl  # expose for _with_backoff session refresh
     except RuntimeError as e:
         log.error("Instagram auth failed: %s", e)
         return []
@@ -281,6 +321,7 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
     records: list = []
     request_count = 0
 
+    skipped = 0
     for media in medias:
         if len(records) >= max_images:
             break
@@ -296,7 +337,14 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
                 ps = _with_backoff(cl.album_download, media.pk, str(tmp_dir), label=f"album_{media.pk}")
                 paths.extend([Path(p) for p in (ps or [])])
         except Exception as e:
-            log.warning("Skipping post %s: %s", media.pk, e)
+            skipped += 1
+            log.warning("Skipping post %s (%d skipped so far): %s: %s",
+                        media.pk, skipped, type(e).__name__, e)
+            # If too many consecutive auth failures, session is dead — stop early
+            if skipped >= 5 and len(records) == 0:
+                log.error("Too many failures with 0 successes — Instagram session may be invalid. "
+                          "Try refreshing IG_SESSION with a new sessionid cookie.")
+                break
             continue
 
         for p in paths:
