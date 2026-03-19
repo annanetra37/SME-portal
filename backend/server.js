@@ -1157,35 +1157,31 @@ ${designGuide}
   if (logFn) {
     // Streaming mode — send live progress updates during generation
     logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: MAX_TOKENS,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
 
     html = '';
-    await withRetry(async () => {
-      html = '';   // reset on retry
-      const stream = anthropic.messages.stream({
-        model: 'claude-sonnet-4-6',
-        max_tokens: MAX_TOKENS,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }],
-      });
+    let lastLogAt = Date.now();
 
-      let lastLogAt = Date.now();
+    stream.on('text', (text) => {
+      html += text;
+      const now = Date.now();
+      if (now - lastLogAt > 2500) {
+        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
+        lastLogAt = now;
+      }
+    });
 
-      stream.on('text', (text) => {
-        html += text;
-        const now = Date.now();
-        if (now - lastLogAt > 2500) {
-          logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
-          lastLogAt = now;
-        }
-      });
-
-      await stream.finalMessage().then(msg => {
-        if (ct && msg.usage) {
-          ct.inputTokens  += msg.usage.input_tokens  || 0;
-          ct.outputTokens += msg.usage.output_tokens || 0;
-        }
-      });
-    }, 'buildHtml-stream');
+    await stream.finalMessage().then(msg => {
+      if (ct && msg.usage) {
+        ct.inputTokens  += msg.usage.input_tokens  || 0;
+        ct.outputTokens += msg.usage.output_tokens || 0;
+      }
+    });
 
     logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
   } else {
