@@ -1536,6 +1536,17 @@ async function showCountryView(country) {
   try {
     const smes = await api('GET', `/countries/${country.id}/smes`);
     state.smes[country.id] = smes;
+    // Reload websites and emails for SMEs that may have them
+    await Promise.all(smes.filter(s => s.status !== 'discovered').map(async s => {
+      try {
+        const site = await api('GET', `/smes/${s.id}/website`);
+        state.websites[s.id] = site;
+      } catch {}
+      try {
+        const email = await api('GET', `/smes/${s.id}/email`);
+        if (email?.subject) state.emails[s.id] = email;
+      } catch {}
+    }));
     renderCountryList();
     updateStats();
   } catch {}
@@ -1553,20 +1564,16 @@ async function loadCountries() {
       try {
         const smes = await api('GET', `/countries/${c.id}/smes`);
         state.smes[c.id] = smes;
-        // Also pre-load websites and emails for already-built ones
+        // Pre-load websites and emails for any SME that may have them
         await Promise.all(smes.filter(s => s.status !== 'discovered').map(async s => {
-          if (['website_built','deployed','email_ready'].includes(s.status)) {
-            try {
-              const site = await api('GET', `/smes/${s.id}/website`);
-              state.websites[s.id] = site;
-            } catch {}
-          }
-          if (s.status === 'email_ready') {
-            try {
-              const email = await api('GET', `/smes/${s.id}/email`);
-              state.emails[s.id] = email;
-            } catch {}
-          }
+          try {
+            const site = await api('GET', `/smes/${s.id}/website`);
+            state.websites[s.id] = site;
+          } catch {}
+          try {
+            const email = await api('GET', `/smes/${s.id}/email`);
+            if (email?.subject) state.emails[s.id] = email;
+          } catch {}
         }));
       } catch {}
     }));
@@ -1776,7 +1783,10 @@ function addSmeCard(s) {
     <div class="sme-card-header">
       <div class="sme-avatar">${getEmoji(s.industry)}</div>
       <div style="flex:1;min-width:0">
-        <div class="sme-name">${s.name} <span class="badge-v" title="Verified real business">verified</span></div>
+        <div class="sme-name">${s.name} ${s.isManual
+          ? '<span class="badge-i" title="Manually added brand">manually added</span>'
+          : '<span class="badge-v" title="Verified real business">verified</span>'
+        }</div>
         <div class="sme-type">${s.productType}</div>
       </div>
       <span class="sme-status status-${s.status}">${s.status.replace('_',' ')}</span>
