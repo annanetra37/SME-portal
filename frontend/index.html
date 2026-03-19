@@ -554,6 +554,7 @@
     }
 
     .status-discovered { background: #7878a020; color: var(--muted); }
+    .status-contacted { background: #00d4ff20; color: #00d4ff; }
     .status-website_built { background: #6c63ff20; color: var(--accent); }
     .status-deployed { background: #43e97b20; color: var(--success); }
     .status-email_ready { background: #ffd16620; color: var(--warning); }
@@ -1854,7 +1855,11 @@ function renderDetailActions(sme) {
   const site = state.websites[sme.id];
   const hasSocial = !!(sme.socialMedia?.instagram || sme.socialMedia?.facebook);
 
+  const isContacted = sme.status === 'contacted';
   document.getElementById('detailActions').innerHTML = `
+    <button class="btn ${isContacted ? 'btn-success' : 'btn-secondary'} btn-sm" onclick="toggleContacted('${sme.id}')" id="contactBtn-${sme.id}" title="${isContacted ? 'Move back to Discovered' : 'Mark as Contacted'}">
+      ${isContacted ? '✅ Contacted' : '📞 Mark Contacted'}
+    </button>
     <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')" id="buildBtn-${sme.id}">
       ${hasWebsite ? '🔄 Rebuild' : '🔨 Build Website'}
     </button>
@@ -2412,6 +2417,7 @@ function renderPipeline() {
   const allSMEs = Object.values(state.smes).flat();
   const stages = [
     { key: 'discovered', label: 'Discovered', color: '#7878a0' },
+    { key: 'contacted', label: 'Contacted', color: '#00d4ff' },
     { key: 'website_built', label: 'Website Built', color: '#6c63ff' },
     { key: 'deployed', label: 'Deployed', color: '#43e97b' },
     { key: 'email_ready', label: 'Email Ready', color: '#ffd166' },
@@ -2460,6 +2466,35 @@ function downloadHtml(smeId, smeName) {
   a.href = URL.createObjectURL(new Blob([site.html], { type: 'text/html' }));
   a.download = `${smeName.replace(/\s+/g, '-').toLowerCase()}.html`;
   a.click();
+}
+
+// ─── SME Status Toggle (Contacted) ─────────────────────
+async function toggleContacted(smeId) {
+  let sme = null;
+  for (const list of Object.values(state.smes)) {
+    sme = list.find(s => s.id === smeId);
+    if (sme) break;
+  }
+  if (!sme) return;
+
+  const newStatus = sme.status === 'contacted' ? 'discovered' : 'contacted';
+  try {
+    const updated = await api('PUT', `/smes/${smeId}/status`, { status: newStatus });
+    // Update local state
+    for (const list of Object.values(state.smes)) {
+      const idx = list.findIndex(s => s.id === smeId);
+      if (idx !== -1) { list[idx] = updated; break; }
+    }
+    state.currentSme = updated;
+    renderDetailActions(updated);
+    renderInfoTab(updated);
+    // Refresh the card in the grid
+    const card = document.querySelector(`[data-sme-id="${smeId}"]`);
+    if (card) card.remove();
+    addSmeCard(updated);
+    updateStats();
+    toast(newStatus === 'contacted' ? '📞 Marked as contacted' : 'Moved back to discovered', 'success');
+  } catch (e) { toast(`Status update failed: ${e.message}`, 'error'); }
 }
 
 // ─── SME Edit / Delete ─────────────────────────────────
