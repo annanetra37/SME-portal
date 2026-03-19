@@ -2242,15 +2242,35 @@ async function buildWebsite(smeId) {
     if (btn) { btn.disabled = false; btn.innerHTML = '🔄 Rebuild'; }
   });
 
+  let sseRetries = 0;
+  const MAX_SSE_RETRIES = 5;
+
   es.addEventListener('error', e => {
     if (buildDone) return; // normal close after done event
-    es.close();
-    let msg = 'Build error';
-    try { msg = JSON.parse(e.data)?.message || msg; } catch (_) {}
-    buildTermLog(smeId, `Error: ${msg}`, 'error');
-    finalizeBuildTerminal(smeId, false);
-    toast(`Build failed: ${msg}`, 'error');
-    if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
+
+    // Distinguish server-sent error events (have JSON data) from
+    // native EventSource reconnection errors (no data).
+    if (e.data) {
+      // Server explicitly sent an error — build truly failed
+      es.close();
+      let msg = 'Build error';
+      try { msg = JSON.parse(e.data)?.message || msg; } catch (_) {}
+      buildTermLog(smeId, `Error: ${msg}`, 'error');
+      finalizeBuildTerminal(smeId, false);
+      toast(`Build failed: ${msg}`, 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
+    } else {
+      // Native connection error — let EventSource auto-reconnect
+      sseRetries++;
+      buildTermLog(smeId, `Connection interrupted — reconnecting (${sseRetries}/${MAX_SSE_RETRIES})…`, 'warn');
+      if (sseRetries >= MAX_SSE_RETRIES) {
+        es.close();
+        buildTermLog(smeId, `Lost connection to build agent after ${MAX_SSE_RETRIES} retries`, 'error');
+        finalizeBuildTerminal(smeId, false);
+        toast('Lost connection to build agent', 'error');
+        if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
+      }
+    }
   });
 }
 
@@ -2423,12 +2443,17 @@ async function deploySite(smeId) {
     if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Deploy'; }
   });
 
+  let deploySseRetries = 0;
   es.addEventListener('error', () => {
     if (deployDone) return;
-    es.close();
-    buildTermLog(smeId, 'Stream connection lost', 'warn');
-    finalizeBuildTerminal(smeId, false);
-    if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Deploy'; }
+    deploySseRetries++;
+    buildTermLog(smeId, `Connection interrupted — reconnecting (${deploySseRetries}/5)…`, 'warn');
+    if (deploySseRetries >= 5) {
+      es.close();
+      buildTermLog(smeId, 'Lost connection to deploy agent', 'error');
+      finalizeBuildTerminal(smeId, false);
+      if (btn) { btn.disabled = false; btn.innerHTML = '🚀 Deploy'; }
+    }
   });
 }
 
