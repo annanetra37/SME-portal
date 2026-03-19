@@ -195,12 +195,37 @@ function costSummary(ct) {
 }
 
 // ─── AI helpers ──────────────────────────────────────────────────────────────
+
+/** Retry wrapper for Anthropic API calls — handles rate limits with backoff. */
+const API_MAX_RETRIES = 5;
+async function withRetry(fn, label = 'api') {
+  for (let attempt = 1; attempt <= API_MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRateLimit = err?.status === 429 || err?.error?.error?.type === 'rate_limit_error';
+      const isOverloaded = err?.status === 529;
+      if ((!isRateLimit && !isOverloaded) || attempt === API_MAX_RETRIES) throw err;
+
+      // Use retry-after header if available, otherwise exponential backoff
+      let wait = Math.min(10 * (2 ** (attempt - 1)), 120);
+      try {
+        const retryAfter = err?.headers?.get?.('retry-after') ?? err?.headers?.['retry-after'];
+        if (retryAfter) wait = Math.max(parseFloat(retryAfter), 1);
+      } catch {}
+
+      console.log(`⏳ ${label}: rate limited (attempt ${attempt}/${API_MAX_RETRIES}) — retrying in ${wait.toFixed(0)}s`);
+      await new Promise(r => setTimeout(r, wait * 1000));
+    }
+  }
+}
+
 /** Sonnet 4.6 — creative generation (HTML, email, social content) */
 async function claude(system, user, maxTokens = 3000, ct = null) {
-  const r = await anthropic.messages.create({
+  const r = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: maxTokens,
     system, messages: [{ role: 'user', content: user }],
-  });
+  }), 'claude');
   if (ct && r.usage) {
     ct.inputTokens  += r.usage.input_tokens  || 0;
     ct.outputTokens += r.usage.output_tokens || 0;
@@ -210,10 +235,10 @@ async function claude(system, user, maxTokens = 3000, ct = null) {
 
 /** Haiku 4.5 — structured extraction / parsing (3.75× cheaper than Sonnet) */
 async function claudeHaiku(system, user, maxTokens = 2000, ct = null) {
-  const r = await anthropic.messages.create({
+  const r = await withRetry(() => anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens,
     system, messages: [{ role: 'user', content: user }],
-  });
+  }), 'claudeHaiku');
   if (ct && r.usage) {
     ct.haikuInput  = (ct.haikuInput  || 0) + (r.usage.input_tokens  || 0);
     ct.haikuOutput = (ct.haikuOutput || 0) + (r.usage.output_tokens || 0);
@@ -224,11 +249,11 @@ async function claudeHaiku(system, user, maxTokens = 2000, ct = null) {
 /** Web search via Sonnet — produces detailed results with specific business names and URLs */
 async function webSearch(query, ct = null) {
   if (ct) ct.searches += 1;
-  const r = await anthropic.messages.create({
+  const r = await withRetry(() => anthropic.messages.create({
     model: 'claude-sonnet-4-6', max_tokens: 6000,
     tools: [{ type: 'web_search_20250305', name: 'web_search' }],
     messages: [{ role: 'user', content: query }],
-  });
+  }), 'webSearch');
   if (ct && r.usage) {
     ct.inputTokens  = (ct.inputTokens  || 0) + (r.usage.input_tokens  || 0);
     ct.outputTokens = (ct.outputTokens || 0) + (r.usage.output_tokens || 0);
@@ -236,7 +261,7 @@ async function webSearch(query, ct = null) {
   if (r.stop_reason === 'tool_use') {
     const toolResults = r.content.filter(b => b.type === 'tool_use')
       .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: 'results retrieved' }));
-    const r2 = await anthropic.messages.create({
+    const r2 = await withRetry(() => anthropic.messages.create({
       model: 'claude-sonnet-4-6', max_tokens: 6000,
       tools: [{ type: 'web_search_20250305', name: 'web_search' }],
       messages: [
@@ -244,7 +269,7 @@ async function webSearch(query, ct = null) {
         { role: 'assistant', content: r.content },
         { role: 'user', content: toolResults },
       ],
-    });
+    }), 'webSearch-followup');
     if (ct && r2.usage) {
       ct.inputTokens  = (ct.inputTokens  || 0) + (r2.usage.input_tokens  || 0);
       ct.outputTokens = (ct.outputTokens || 0) + (r2.usage.output_tokens || 0);
@@ -1132,31 +1157,35 @@ ${designGuide}
   if (logFn) {
     // Streaming mode — send live progress updates during generation
     logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: MAX_TOKENS,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
 
     html = '';
-    let lastLogAt = Date.now();
+    await withRetry(async () => {
+      html = '';   // reset on retry
+      const stream = anthropic.messages.stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: MAX_TOKENS,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      });
 
-    stream.on('text', (text) => {
-      html += text;
-      const now = Date.now();
-      if (now - lastLogAt > 2500) {
-        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
-        lastLogAt = now;
-      }
-    });
+      let lastLogAt = Date.now();
 
-    await stream.finalMessage().then(msg => {
-      if (ct && msg.usage) {
-        ct.inputTokens  += msg.usage.input_tokens  || 0;
-        ct.outputTokens += msg.usage.output_tokens || 0;
-      }
-    });
+      stream.on('text', (text) => {
+        html += text;
+        const now = Date.now();
+        if (now - lastLogAt > 2500) {
+          logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
+          lastLogAt = now;
+        }
+      });
+
+      await stream.finalMessage().then(msg => {
+        if (ct && msg.usage) {
+          ct.inputTokens  += msg.usage.input_tokens  || 0;
+          ct.outputTokens += msg.usage.output_tokens || 0;
+        }
+      });
+    }, 'buildHtml-stream');
 
     logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
   } else {
