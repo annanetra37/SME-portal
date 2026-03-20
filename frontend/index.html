@@ -922,16 +922,22 @@
 
     /* ─── Pipeline View ───────────────────────────────────── */
     .pipeline {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      display: flex;
       gap: 16px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      min-height: calc(100vh - 120px);
     }
+    .pipeline::-webkit-scrollbar { height: 6px; }
+    .pipeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
     .pipeline-col {
       background: var(--surface);
       border-radius: 16px;
       border: 1px solid var(--border);
       overflow: hidden;
+      min-width: 240px;
+      flex: 1 1 0;
     }
 
     .pipeline-col-header {
@@ -948,7 +954,9 @@
 
     .pipeline-dot { width: 8px; height: 8px; border-radius: 50%; }
     .pipeline-count { margin-left: auto; background: var(--surface2); padding: 2px 8px; border-radius: 99px; font-size: 11px; }
-    .pipeline-items { padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 100px; }
+    .pipeline-items { padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 100px; max-height: calc(100vh - 200px); overflow-y: auto; }
+    .pipeline-items::-webkit-scrollbar { width: 4px; }
+    .pipeline-items::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
     .pipeline-item {
       background: var(--surface2);
@@ -1528,6 +1536,10 @@ async function showCountryView(country) {
     <div class="sub">SME Market Research — Social Media Only Businesses</div>
   `;
   document.getElementById('topbarActions').innerHTML = `
+    <input type="text" id="smeSearchInput" placeholder="Search SMEs…" oninput="filterSmeGrid()" style="
+      background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 12px;
+      color:var(--text); font-size:13px; width:180px; outline:none; font-family:'DM Sans',sans-serif;
+    " onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
     <button class="btn btn-secondary" onclick="toggleSearchFilters()" id="filtersToggleBtn" title="Search filters">
       ⚙️ Filters
     </button>
@@ -1856,7 +1868,16 @@ function renderSMEGrid(countryId) {
   smes.forEach(s => addSmeCard(s));
 }
 
-
+function filterSmeGrid() {
+  const input = document.getElementById('smeSearchInput');
+  if (!input) return;
+  const q = input.value.toLowerCase().trim();
+  document.querySelectorAll('#smeGrid .sme-card').forEach(card => {
+    if (!q) { card.style.display = ''; return; }
+    const text = card.textContent.toLowerCase();
+    card.style.display = text.includes(q) ? '' : 'none';
+  });
+}
 
 function formatNum(n) {
   if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
