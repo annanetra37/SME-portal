@@ -2251,7 +2251,10 @@ async function buildWebsite(smeId) {
   });
 
   let sseRetries = 0;
-  const MAX_SSE_RETRIES = 5;
+  const MAX_SSE_RETRIES = 15;
+
+  // Reset retry counter whenever we receive a successful message
+  es.addEventListener('log', () => { sseRetries = 0; });
 
   es.addEventListener('error', e => {
     if (buildDone) return; // normal close after done event
@@ -2268,12 +2271,11 @@ async function buildWebsite(smeId) {
       toast(`Build failed: ${msg}`, 'error');
       if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
     } else {
-      // Native connection error — let EventSource auto-reconnect
+      // Native connection error — let EventSource auto-reconnect silently
       sseRetries++;
-      buildTermLog(smeId, `Connection interrupted — reconnecting (${sseRetries}/${MAX_SSE_RETRIES})…`, 'warn');
       if (sseRetries >= MAX_SSE_RETRIES) {
         es.close();
-        buildTermLog(smeId, `Lost connection to build agent after ${MAX_SSE_RETRIES} retries`, 'error');
+        buildTermLog(smeId, `Lost connection to build agent`, 'error');
         finalizeBuildTerminal(smeId, false);
         toast('Lost connection to build agent', 'error');
         if (btn) { btn.disabled = false; btn.innerHTML = state.websites[smeId] ? '🔄 Rebuild' : '🔨 Build Website'; }
