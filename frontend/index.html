@@ -567,6 +567,7 @@
     .status-website_built { background: #6c63ff20; color: var(--accent); }
     .status-deployed { background: #43e97b20; color: var(--success); }
     .status-email_ready { background: #ffd16620; color: var(--warning); }
+    .status-rejected { background: #ff4d6d20; color: var(--danger); }
 
     .sme-card-actions { display:flex; gap:6px; padding-top:10px; border-top:1px solid var(--border); margin-top:10px; }
     .sme-card-actions button { font-size:11px; padding:4px 10px; border-radius:6px; border:1px solid var(--border); background:var(--surface2); color:var(--muted); cursor:pointer; transition:all .2s; }
@@ -1827,6 +1828,9 @@ function addSmeCard(s) {
       <button onclick="quickSetStatus('${s.id}','customer_converted')" ${s.status==='customer_converted'?'class="active-status"':''} title="Mark as customer converted">
         ${s.status==='customer_converted' ? '✅ Converted' : '🤝 Converted'}
       </button>
+      <button onclick="quickSetStatus('${s.id}','rejected')" ${s.status==='rejected'?'class="active-status"':''} title="Mark as rejected">
+        ${s.status==='rejected' ? '✅ Rejected' : '❌ Reject'}
+      </button>
     </div>`;
   grid.appendChild(div);
 }
@@ -1899,12 +1903,16 @@ function renderDetailActions(sme) {
 
   const isContacted = sme.status === 'contacted';
   const isConverted = sme.status === 'customer_converted';
+  const isRejected = sme.status === 'rejected';
   document.getElementById('detailActions').innerHTML = `
     <button class="btn ${isContacted ? 'btn-success' : 'btn-secondary'} btn-sm" onclick="quickSetStatus('${sme.id}','contacted')" title="${isContacted ? 'Undo contacted' : 'Mark as Contacted'}">
       ${isContacted ? '✅ Contacted' : '📞 Contacted'}
     </button>
     <button class="btn ${isConverted ? 'btn-success' : 'btn-secondary'} btn-sm" onclick="quickSetStatus('${sme.id}','customer_converted')" title="${isConverted ? 'Undo converted' : 'Mark as Customer Converted'}">
       ${isConverted ? '✅ Converted' : '🤝 Converted'}
+    </button>
+    <button class="btn ${isRejected ? 'btn-danger' : 'btn-secondary'} btn-sm" onclick="quickSetStatus('${sme.id}','rejected')" title="${isRejected ? 'Undo rejected' : 'Mark as Rejected'}">
+      ${isRejected ? '✅ Rejected' : '❌ Reject'}
     </button>
     <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')" id="buildBtn-${sme.id}">
       ${hasWebsite ? '🔄 Rebuild' : '🔨 Build Website'}
@@ -2020,16 +2028,14 @@ function renderInfoTab(sme) {
       <p style="font-size:14px;color:var(--muted);font-style:italic">"${sme.noWebsiteReason}"</p>
     </div>
 
-    ${['contacted','customer_converted'].includes(sme.status) ? `
-      <hr class="divider" />
-      <div class="notes-section">
-        <div class="notes-label">
-          📝 Notes
-          <span class="notes-saved" id="notesSaved-${sme.id}">Saved!</span>
-        </div>
-        <textarea id="notes-${sme.id}" placeholder="Add notes about this ${sme.status === 'contacted' ? 'contact' : 'customer'}... (tailored requests, process details, follow-up actions, etc.)" oninput="onNotesInput('${sme.id}')">${sme.notes || ''}</textarea>
+    <hr class="divider" />
+    <div class="notes-section">
+      <div class="notes-label">
+        📝 Notes
+        <span class="notes-saved" id="notesSaved-${sme.id}">Saved!</span>
       </div>
-    ` : ''}
+      <textarea id="notes-${sme.id}" placeholder="Add notes about this lead… (observations, follow-up actions, requests, etc.)" oninput="onNotesInput('${sme.id}')">${sme.notes || ''}</textarea>
+    </div>
   `;
 }
 
@@ -2504,6 +2510,7 @@ function renderPipeline() {
     { key: 'website_built', label: 'Website Built', color: '#6c63ff', match: ['website_built', 'deployed', 'email_ready'] },
     { key: 'contacted', label: 'Contacted', color: '#00d4ff', match: ['contacted'] },
     { key: 'customer_converted', label: 'Customer Converted', color: '#43e97b', match: ['customer_converted'] },
+    { key: 'rejected', label: 'Rejected', color: '#ff4d6d', match: ['rejected'] },
   ];
 
   document.getElementById('pipelineBoard').innerHTML = stages.map(stage => {
@@ -2579,12 +2586,12 @@ async function quickSetStatus(smeId, targetStatus) {
       renderInfoTab(updated);
     }
     updateStats();
-    const labels = { contacted: '📞 Contacted', customer_converted: '🤝 Customer Converted', discovered: 'Discovered' };
+    const labels = { contacted: '📞 Contacted', customer_converted: '🤝 Customer Converted', discovered: 'Discovered', rejected: '❌ Rejected' };
     toast(`${labels[newStatus] || newStatus}`, 'success');
   } catch (e) { toast(`Status update failed: ${e.message}`, 'error'); }
 }
 
-// ─── Notes (for contacted / converted) ─────────────────
+// ─── Notes (all statuses) ─────────────────
 async function saveNotes(smeId) {
   const textarea = document.getElementById(`notes-${smeId}`);
   if (!textarea) return;
