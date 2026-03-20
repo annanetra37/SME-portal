@@ -1274,7 +1274,7 @@ app.put('/api/smes/:id', async (req, res) => {
 
 // ── Update SME status manually ────────────────────────────────────────────────
 app.put('/api/smes/:id/status', async (req, res) => {
-  const allowed = ['discovered', 'contacted', 'customer_converted', 'website_built', 'deployed', 'email_ready'];
+  const allowed = ['discovered', 'contacted', 'customer_converted', 'website_built', 'deployed', 'email_ready', 'rejected'];
   const { status } = req.body;
   if (!status || !allowed.includes(status)) {
     return res.status(400).json({ error: `Invalid status. Allowed: ${allowed.join(', ')}` });
