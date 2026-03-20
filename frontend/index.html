@@ -1891,8 +1891,8 @@ function filterPipeline() {
   const q = input.value.toLowerCase().trim();
   document.querySelectorAll('#pipelineBoard .pipeline-item').forEach(item => {
     if (!q) { item.style.display = ''; return; }
-    const text = item.textContent.toLowerCase();
-    item.style.display = text.includes(q) ? '' : 'none';
+    const searchText = item.getAttribute('data-search') || item.textContent.toLowerCase();
+    item.style.display = searchText.includes(q) ? '' : 'none';
   });
 }
 
@@ -2562,9 +2562,9 @@ function renderPipeline() {
         </div>
         <div class="pipeline-items">
           ${items.map(s => `
-            <div class="pipeline-item" onclick="openDetail('${s.id}')">
+            <div class="pipeline-item" onclick="openDetail('${s.id}')" data-search="${(s.name + ' ' + s.productType + ' ' + (s.industry||'') + ' ' + (s.location||'')).toLowerCase().replace(/"/g,'')}">
               <div class="pipeline-item-name">${getEmoji(s.industry)} ${s.name}</div>
-              <div class="pipeline-item-meta">${s.productType}</div>
+              <div class="pipeline-item-meta">${s.productType} · ${(s.location||'').split(',')[0]}</div>
             </div>
           `).join('') || '<div style="color:var(--muted);font-size:12px;text-align:center;padding:20px">Empty</div>'}
         </div>
