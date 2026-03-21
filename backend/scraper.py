@@ -21,6 +21,13 @@ from datetime import datetime
 import requests
 from PIL import Image
 
+# OCR for text detection — optional, degrades gracefully
+try:
+    import pytesseract
+    HAS_OCR = True
+except ImportError:
+    HAS_OCR = False
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -95,6 +102,26 @@ def sha256_prefix(path: Path) -> str:
             h.update(chunk)
     return h.hexdigest()[:14]
 
+MAX_TEXT_CHARS = 40   # images with more OCR characters than this are skipped
+
+def _has_text_overlay(path: Path) -> bool:
+    """Return True if the image contains significant text (promo banners, flyers, etc.)."""
+    if not HAS_OCR:
+        return False
+    try:
+        with Image.open(path) as img:
+            # Resize to speed up OCR (max 800px on longest side)
+            img.thumbnail((800, 800), Image.LANCZOS)
+            text = pytesseract.image_to_string(img, timeout=5)
+            # Strip whitespace and count meaningful characters
+            clean = re.sub(r'\s+', '', text)
+            if len(clean) > MAX_TEXT_CHARS:
+                log.info("  ⊘ Skipped (text overlay: %d chars): %s", len(clean), path.name)
+                return True
+        return False
+    except Exception:
+        return False  # OCR failed — allow the image
+
 def is_quality_image(path: Path) -> bool:
     try:
         if path.stat().st_size < MIN_SIZE:
@@ -105,6 +132,9 @@ def is_quality_image(path: Path) -> bool:
                 return False
             if img.mode in ("L", "1"):
                 return False
+        # Skip images with text overlays (promo banners, price lists, flyers)
+        if _has_text_overlay(path):
+            return False
         return True
     except Exception:
         return False
