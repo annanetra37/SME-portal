@@ -1165,6 +1165,12 @@
 
     <!-- Pipeline -->
     <div class="view" id="view-pipeline">
+      <div style="margin-bottom:14px">
+        <input type="text" id="pipelineSearchInput" placeholder="Search pipeline…" oninput="filterPipeline()" style="
+          background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 12px;
+          color:var(--text); font-size:13px; width:220px; outline:none; font-family:'DM Sans',sans-serif;
+        " onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+      </div>
       <div class="pipeline" id="pipelineBoard"></div>
     </div>
 
@@ -1536,7 +1542,7 @@ async function showCountryView(country) {
     <div class="sub">SME Market Research — Social Media Only Businesses</div>
   `;
   document.getElementById('topbarActions').innerHTML = `
-    <input type="text" id="smeSearchInput" placeholder="Search SMEs…" oninput="filterSmeGrid(); filterPipeline()" style="
+    <input type="text" id="smeSearchInput" placeholder="Search SMEs…" oninput="filterSmeGrid()" style="
       background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 12px;
       color:var(--text); font-size:13px; width:180px; outline:none; font-family:'DM Sans',sans-serif;
     " onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
@@ -1880,7 +1886,7 @@ function filterSmeGrid() {
 }
 
 function filterPipeline() {
-  const input = document.getElementById('smeSearchInput');
+  const input = document.getElementById('pipelineSearchInput');
   if (!input) return;
   const q = input.value.toLowerCase().trim();
   document.querySelectorAll('#pipelineBoard .pipeline-item').forEach(item => {
