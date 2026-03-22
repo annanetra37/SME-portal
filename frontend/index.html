@@ -1041,11 +1041,110 @@
     }
     .btn-scrape:hover { background: #22224a; border-color: #6c63ff; color: #c0a0ff; }
     .btn-scrape:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ─── Mobile hamburger (hidden on desktop) ─── */
+    .hamburger-btn { display: none; }
+    .sidebar-overlay { display: none; }
+
+    /* ═══ MOBILE RESPONSIVE ═══════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+      /* ── Hamburger button ── */
+      .hamburger-btn {
+        display: flex; align-items: center; justify-content: center;
+        background: none; border: none; color: var(--text); font-size: 22px;
+        cursor: pointer; padding: 4px; margin-right: 4px; flex-shrink: 0;
+      }
+
+      /* ── Sidebar: off-canvas drawer ── */
+      .sidebar {
+        position: fixed; left: 0; top: 0; z-index: 300;
+        transform: translateX(-100%);
+        transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+        width: 260px;
+      }
+      .sidebar.mobile-open { transform: translateX(0); }
+      .sidebar-overlay {
+        display: block; position: fixed; inset: 0; z-index: 299;
+        background: #00000060; backdrop-filter: blur(3px);
+        opacity: 0; pointer-events: none; transition: opacity 0.3s;
+      }
+      .sidebar-overlay.open { opacity: 1; pointer-events: auto; }
+
+      /* ── Main area: full width ── */
+      body { flex-direction: column; }
+      .main { width: 100%; min-width: 0; }
+
+      /* ── Topbar ── */
+      .topbar { padding: 12px 14px; gap: 8px; flex-wrap: wrap; }
+      .topbar-title { font-size: 16px !important; }
+      .topbar-title .sub { font-size: 11px; }
+      .topbar-actions { gap: 6px; flex-wrap: wrap; }
+      .topbar-actions .btn { font-size: 11px; padding: 6px 10px; }
+      #smeSearchInput { width: 100% !important; min-width: 0 !important; }
+
+      /* ── Content area ── */
+      .content { padding: 16px; }
+
+      /* ── Stats grid ── */
+      .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 20px; }
+      .stat-card { padding: 14px; }
+      .stat-value { font-size: 22px !important; }
+      .stat-icon { font-size: 20px; }
+
+      /* ── SME grid ── */
+      .sme-grid { grid-template-columns: 1fr; gap: 14px; }
+      .sme-card { padding: 16px; }
+      .sme-card-actions { flex-wrap: wrap; }
+      .sme-card-actions button { flex: 1; min-width: 70px; text-align: center; }
+
+      /* ── Detail panel: full screen ── */
+      .detail-panel { width: 100vw; }
+      .detail-header { padding: 14px 16px; }
+      .detail-content { padding: 16px; }
+      .detail-actions { flex-wrap: wrap; gap: 6px; }
+      .detail-actions .btn { font-size: 11px; padding: 5px 8px; }
+
+      /* ── Modals ── */
+      .modal { width: 95vw; padding: 20px; border-radius: 14px; }
+      .edit-modal-box { width: 95vw; padding: 20px; }
+
+      /* ── Pipeline: vertical stack on mobile ── */
+      .pipeline { flex-direction: column; min-height: auto; overflow-x: visible; }
+      .pipeline-col { min-width: 100%; }
+      .pipeline-items { max-height: none; }
+
+      /* ── Search filters ── */
+      .search-filters-panel { padding: 14px; }
+      .filter-row { flex-direction: column; }
+      .industry-chips { gap: 6px; }
+      .chip { font-size: 11px; padding: 4px 8px; }
+
+      /* ── Build terminal ── */
+      .bt-box { font-size: 11px; max-height: 250px; }
+
+      /* ── Notes ── */
+      .notes-section textarea { min-height: 70px; font-size: 12px; }
+
+      /* ── Costs table ── */
+      .costs-table { font-size: 11px; }
+      .costs-table th, .costs-table td { padding: 8px 6px; }
+    }
+
+    /* ═══ SMALL PHONES ═════════════════════════════════════════════════════════ */
+    @media (max-width: 380px) {
+      .topbar { padding: 10px; }
+      .content { padding: 10px; }
+      .stats-grid { grid-template-columns: 1fr; }
+      .stat-card { padding: 10px; }
+      .sme-card-actions button { font-size: 10px; padding: 3px 6px; }
+      .detail-actions .btn { font-size: 10px; }
+    }
   </style>
 </head>
 <body>
 
 <!-- ─── SIDEBAR ─── -->
+<div class="sidebar-overlay" onclick="toggleMobileSidebar()"></div>
 <aside class="sidebar">
   <div class="logo">
     <div class="logo-mark">Web<span>Launch</span></div>
@@ -1077,6 +1176,7 @@
 <!-- ─── MAIN ─── -->
 <main class="main">
   <div class="topbar">
+    <button class="hamburger-btn" onclick="toggleMobileSidebar()" aria-label="Menu">☰</button>
     <div class="topbar-title" id="topbarTitle">
       Dashboard
       <div class="sub">Overview of your SME pipeline</div>
@@ -1394,6 +1494,12 @@ function toast(msg, type = 'info') {
   setTimeout(() => el.remove(), 4000);
 }
 
+// ─── Mobile sidebar toggle ────────────────────────────
+function toggleMobileSidebar() {
+  document.querySelector('.sidebar').classList.toggle('mobile-open');
+  document.querySelector('.sidebar-overlay').classList.toggle('open');
+}
+
 // ─── Modal ─────────────────────────────────────────────
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
@@ -1401,6 +1507,9 @@ function openAddCountry() { openModal('addCountryModal'); }
 
 // ─── View management ───────────────────────────────────
 function showView(name, navEl) {
+  // Close mobile sidebar on navigation
+  document.querySelector('.sidebar')?.classList.remove('mobile-open');
+  document.querySelector('.sidebar-overlay')?.classList.remove('open');
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('view-' + name).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -1532,6 +1641,9 @@ function renderCostsTable(rows) {
 
 async function showCountryView(country) {
   state.currentCountry = country;
+  // Close mobile sidebar
+  document.querySelector('.sidebar')?.classList.remove('mobile-open');
+  document.querySelector('.sidebar-overlay')?.classList.remove('open');
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.querySelectorAll('.country-item').forEach(c => {
     c.classList.toggle('active', c.dataset.id === country.id);
