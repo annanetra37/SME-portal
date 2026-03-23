@@ -49,6 +49,7 @@ async function ensureSchema() {
     );
     ALTER TABLE smes ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
     ALTER TABLE smes ADD COLUMN IF NOT EXISTS is_manual BOOLEAN DEFAULT FALSE;
+    ALTER TABLE smes ADD COLUMN IF NOT EXISTS existing_website TEXT DEFAULT '';
     CREATE TABLE IF NOT EXISTS websites (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       sme_id UUID NOT NULL REFERENCES smes(id) ON DELETE CASCADE,
@@ -318,6 +319,7 @@ function normalizeSme(row) {
     noWebsiteReason: row.no_website_reason, opportunityScore: row.opportunity_score,
     languages: p(row.languages) || [], status: row.status,
     notes: row.notes || '', isManual: row.is_manual || false,
+    existingWebsite: row.existing_website || '',
     isIllustrative: row.is_illustrative || false, createdAt: row.created_at,
   };
 }
@@ -327,15 +329,15 @@ async function insertSme(countryId, s, { isManual = false } = {}) {
     `INSERT INTO smes (country_id,name,industry,product_type,description,location,
       founded_year,employee_count,monthly_revenue,social_media,contact_email,owner_name,
       followers,products,price_range,tags,no_website_reason,opportunity_score,
-      languages,is_illustrative,is_manual,status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'discovered')
+      languages,is_illustrative,is_manual,existing_website,status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'discovered')
      RETURNING *`,
     [countryId, s.name, s.industry || 'General', s.productType || '', s.description || '',
      s.location || '', s.foundedYear || null, s.employeeCount || '1-5', s.monthlyRevenue || 'Unknown',
      JSON.stringify(s.socialMedia || {}), s.contactEmail || null, s.ownerName || '',
      JSON.stringify(s.followers || {}), JSON.stringify(s.products || []), s.priceRange || '',
      JSON.stringify(s.tags || []), s.noWebsiteReason || '', s.opportunityScore || 75,
-     JSON.stringify(s.languages || []), s.isIllustrative || false, isManual]
+     JSON.stringify(s.languages || []), s.isIllustrative || false, isManual, s.existingWebsite || '']
   );
   return normalizeSme(rows[0]);
 }
@@ -1253,7 +1255,7 @@ app.delete('/api/countries/:id', async (req, res) => {
 app.put('/api/smes/:id', async (req, res) => {
   try {
     const { name, industry, productType, description, location, contactEmail,
-            ownerName, socialMedia, followers, noWebsiteReason, opportunityScore } = req.body;
+            ownerName, socialMedia, followers, noWebsiteReason, opportunityScore, existingWebsite } = req.body;
     const { rows } = await pool.query(
       `UPDATE smes SET
         name               = COALESCE($1,  name),
@@ -1266,8 +1268,9 @@ app.put('/api/smes/:id', async (req, res) => {
         social_media       = COALESCE($8,  social_media),
         followers          = COALESCE($9,  followers),
         no_website_reason  = COALESCE($10, no_website_reason),
-        opportunity_score  = COALESCE($11, opportunity_score)
-       WHERE id = $12 RETURNING *`,
+        opportunity_score  = COALESCE($11, opportunity_score),
+        existing_website   = COALESCE($12, existing_website)
+       WHERE id = $13 RETURNING *`,
       [
         name        || null,
         industry    || null,
@@ -1280,6 +1283,7 @@ app.put('/api/smes/:id', async (req, res) => {
         followers    ? JSON.stringify(followers)    : null,
         noWebsiteReason || null,
         opportunityScore != null ? Number(opportunityScore) : null,
+        existingWebsite !== undefined ? existingWebsite : null,
         req.params.id,
       ]
     );

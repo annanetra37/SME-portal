@@ -1709,6 +1709,14 @@ async function showCountryView(country) {
       background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 12px;
       color:var(--text); font-size:13px; width:180px; outline:none; font-family:'DM Sans',sans-serif;
     " onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='var(--border)'" />
+    <select id="smeWebsiteFilter" onchange="filterSmeGrid()" style="
+      background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:7px 10px;
+      color:var(--text); font-size:12px; outline:none; font-family:'DM Sans',sans-serif; cursor:pointer;
+    ">
+      <option value="all">All SMEs</option>
+      <option value="yes">🌐 Has Website</option>
+      <option value="no">🚫 No Website</option>
+    </select>
     <button class="btn btn-secondary" onclick="toggleSearchFilters()" id="filtersToggleBtn" title="Search filters">
       ⚙️ Filters
     </button>
@@ -1970,6 +1978,7 @@ function addSmeCard(s) {
   const div = document.createElement('div');
   div.className = 'sme-card card-new';
   div.setAttribute('data-sme-id', s.id);
+  div.setAttribute('data-has-website', s.existingWebsite ? 'yes' : 'no');
   div.setAttribute('onclick', `openDetail('${s.id}')`);
   div.innerHTML = `
     <div class="sme-card-header">
@@ -2041,10 +2050,12 @@ function filterSmeGrid() {
   const input = document.getElementById('smeSearchInput');
   if (!input) return;
   const q = input.value.toLowerCase().trim();
+  const wf = document.getElementById('smeWebsiteFilter')?.value || 'all';
   document.querySelectorAll('#smeGrid .sme-card').forEach(card => {
-    if (!q) { card.style.display = ''; return; }
-    const text = card.textContent.toLowerCase();
-    card.style.display = text.includes(q) ? '' : 'none';
+    let show = true;
+    if (q) show = card.textContent.toLowerCase().includes(q);
+    if (show && wf !== 'all') show = card.getAttribute('data-has-website') === wf;
+    card.style.display = show ? '' : 'none';
   });
 }
 
@@ -2171,6 +2182,10 @@ function renderInfoTab(sme) {
       <div class="info-item">
         <div class="info-item-label">Contact Email</div>
         <div class="info-item-value">${sme.contactEmail}</div>
+      </div>
+      <div class="info-item">
+        <div class="info-item-label">Website</div>
+        <div class="info-item-value">${sme.existingWebsite ? `<a href="${sme.existingWebsite}" target="_blank" style="color:var(--accent)">${sme.existingWebsite}</a>` : '<span style="color:var(--muted)">None</span>'}</div>
       </div>
     </div>
 
@@ -3013,6 +3028,7 @@ function openEditSme(smeId) {
   document.getElementById('editOwner').value = sme.ownerName || '';
   document.getElementById('editEmail').value = sme.contactEmail || '';
   document.getElementById('editDescription').value = sme.description || '';
+  document.getElementById('editExistingWebsite').value = sme.existingWebsite || '';
   document.getElementById('editFacebook').value = sme.socialMedia?.facebook || '';
   document.getElementById('editInstagram').value = sme.socialMedia?.instagram || '';
   document.getElementById('editWhatsapp').value = sme.socialMedia?.whatsapp || '';
@@ -3040,6 +3056,7 @@ async function saveEditSme() {
     ownerName:   document.getElementById('editOwner').value.trim(),
     contactEmail:document.getElementById('editEmail').value.trim() || null,
     description: document.getElementById('editDescription').value.trim(),
+    existingWebsite: document.getElementById('editExistingWebsite').value.trim(),
     socialMedia: { facebook: fb || null, instagram: ig || null, whatsapp: wa || null },
   };
   try {
@@ -3111,6 +3128,7 @@ async function submitAddBrand() {
     location:       document.getElementById('addBrandLocation').value.trim(),
     ownerName:      document.getElementById('addBrandOwner').value.trim(),
     contactEmail:   document.getElementById('addBrandEmail').value.trim() || null,
+    existingWebsite: document.getElementById('addBrandWebsite').value.trim(),
     socialMedia:    { facebook: fb || null, instagram: ig || null, whatsapp: wa || null },
     priceRange:     document.getElementById('addBrandPriceRange').value.trim(),
     monthlyRevenue: document.getElementById('addBrandRevenue').value.trim(),
@@ -3132,7 +3150,7 @@ async function submitAddBrand() {
     toast(`${sme.name} added!`, 'success');
     // Reset form fields
     ['addBrandName','addBrandProductType','addBrandLocation','addBrandOwner',
-     'addBrandEmail','addBrandDescription','addBrandFacebook','addBrandInstagram',
+     'addBrandEmail','addBrandDescription','addBrandWebsite','addBrandFacebook','addBrandInstagram',
      'addBrandWhatsapp','addBrandPriceRange','addBrandRevenue'].forEach(id => {
       document.getElementById(id).value = '';
     });
@@ -3182,6 +3200,10 @@ loadCountries();
     <div class="edit-field">
       <label>Description</label>
       <textarea id="editDescription"></textarea>
+    </div>
+    <div class="edit-field">
+      <label>Website URL</label>
+      <input type="url" id="editExistingWebsite" placeholder="https://example.com" />
     </div>
     <div class="edit-field">
       <label>Facebook URL</label>
@@ -3246,6 +3268,10 @@ loadCountries();
         <div class="edit-field full-width">
           <label>Description</label>
           <textarea id="addBrandDescription" placeholder="Brief description of the business..."></textarea>
+        </div>
+        <div class="edit-field">
+          <label>Website URL</label>
+          <input type="url" id="addBrandWebsite" placeholder="https://example.com" />
         </div>
         <div class="edit-field">
           <label>Facebook URL</label>
