@@ -1952,13 +1952,20 @@ app.post('/api/smes/:id/edit-website', async (req, res) => {
 
   try {
     const ct = newCost();
-    const edited = await claude(
-      `You are an expert website editor. You receive an existing HTML website and a modification instruction.
+    // Use streaming to avoid timeout on large HTML round-trips
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6', max_tokens: 64000,
+      system: `You are an expert website editor. You receive an existing HTML website and a modification instruction.
 Apply the requested change precisely. Output ONLY the complete modified HTML — no explanation, no markdown fences.
 Keep everything else exactly the same. The output must be a complete, working HTML file ending with </html>.`,
-      `Here is the current website HTML:\n\n${currentHtml}\n\n━━━ MODIFICATION REQUEST ━━━\n${instruction}\n\nApply this change and output the complete modified HTML.`,
-      64000, ct
-    );
+      messages: [{ role: 'user', content: `Here is the current website HTML:\n\n${currentHtml}\n\n━━━ MODIFICATION REQUEST ━━━\n${instruction}\n\nApply this change and output the complete modified HTML.` }],
+    });
+    const r = await stream.finalMessage();
+    if (r.usage) {
+      ct.inputTokens  += r.usage.input_tokens  || 0;
+      ct.outputTokens += r.usage.output_tokens || 0;
+    }
+    const edited = r.content[0].text;
 
     let html = edited.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
 
