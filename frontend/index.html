@@ -730,6 +730,45 @@
       display: block;
     }
 
+    /* Photos tab */
+    .photos-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .photo-card {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      aspect-ratio: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      transition: transform .15s;
+    }
+    .photo-card:hover { transform: scale(1.03); }
+    .photo-card img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .photo-card .photo-delete {
+      position: absolute; top: 6px; right: 6px;
+      background: rgba(0,0,0,.65); color: #fff;
+      border: none; border-radius: 50%;
+      width: 26px; height: 26px;
+      cursor: pointer; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity .15s;
+    }
+    .photo-card:hover .photo-delete { opacity: 1; }
+    .photo-card .photo-badge {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,.7));
+      color: #fff; font-size: 10px; padding: 12px 8px 6px;
+      text-align: center;
+    }
+
     /* Email tab */
     .email-card {
       background: var(--surface2);
@@ -1363,11 +1402,13 @@
   <div class="detail-actions" id="detailActions"></div>
   <div class="detail-tabs" id="detailTabs">
     <div class="detail-tab active" onclick="switchTab('info', this)">📋 Info</div>
+    <div class="detail-tab" onclick="switchTab('photos', this)">📸 Photos</div>
     <div class="detail-tab" onclick="switchTab('website', this)">🌐 Website</div>
     <div class="detail-tab" onclick="switchTab('email', this)">✉️ Email</div>
   </div>
   <div class="detail-content">
     <div class="tab-pane active" id="tab-info"></div>
+    <div class="tab-pane" id="tab-photos"></div>
     <div class="tab-pane" id="tab-website"></div>
     <div class="tab-pane" id="tab-email"></div>
   </div>
@@ -2029,6 +2070,7 @@ function openDetail(smeId) {
 
   renderDetailActions(sme);
   renderInfoTab(sme);
+  renderPhotosTab(sme);
   renderWebsiteTab(sme);
   renderEmailTab(sme);
 
@@ -2072,10 +2114,6 @@ function renderDetailActions(sme) {
         📸 Scrape Photos
       </button>
     ` : ''}
-    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('photoUpload-${sme.id}').click()" title="Upload photos manually">
-      📤 Upload Photos
-    </button>
-    <input type="file" id="photoUpload-${sme.id}" multiple accept="image/*" style="display:none" onchange="uploadPhotos('${sme.id}', this.files)" />
     ${hasWebsite ? `
       <button class="btn btn-secondary btn-sm" onclick="deploySite('${sme.id}')" id="deployBtn-${sme.id}">
         ${site?.deployedUrl ? '✅ Deployed' : '🚀 Deploy'}
@@ -2191,6 +2229,51 @@ function renderInfoTab(sme) {
       <textarea id="notes-${sme.id}" placeholder="Add notes about this lead… (observations, follow-up actions, requests, etc.)" oninput="onNotesInput('${sme.id}')">${sme.notes || ''}</textarea>
     </div>
   `;
+}
+
+async function renderPhotosTab(sme) {
+  const el = document.getElementById('tab-photos');
+  el.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px;text-align:center">Loading photos…</div>`;
+
+  try {
+    const images = await api('GET', `/smes/${sme.id}/images`);
+    if (!images.length) {
+      el.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">📸</div>
+          <div class="empty-title">No photos yet</div>
+          <div class="empty-sub">Scrape from social media or upload manually.</div>
+          <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:12px">
+            ${sme.socialMedia?.instagram || sme.socialMedia?.facebook ? `<button class="btn-scrape" onclick="scrapePhotos('${sme.id}')">📸 Scrape Photos</button>` : ''}
+            <button class="btn btn-primary btn-sm" onclick="document.getElementById('photosTabUpload-${sme.id}').click()">📤 Upload Photos</button>
+            <input type="file" id="photosTabUpload-${sme.id}" multiple accept="image/*" style="display:none" onchange="uploadPhotosAndRefresh('${sme.id}', this.files)" />
+          </div>
+        </div>`;
+      return;
+    }
+
+    const grid = images.map(img => `
+      <div class="photo-card">
+        <img src="${img.data}" alt="" loading="lazy" />
+        <button class="photo-delete" onclick="deletePhoto('${sme.id}','${img.id}')" title="Delete photo">✕</button>
+        ${img.platform ? `<div class="photo-badge">${img.platform}</div>` : ''}
+      </div>
+    `).join('');
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="font-size:13px;color:var(--muted)">${images.length} photo${images.length !== 1 ? 's' : ''}</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          ${sme.socialMedia?.instagram || sme.socialMedia?.facebook ? `<button class="btn-scrape btn-sm" onclick="scrapePhotos('${sme.id}')" style="font-size:12px;padding:5px 12px">📸 Scrape More</button>` : ''}
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('photosTabUpload-${sme.id}').click()">📤 Upload</button>
+          <input type="file" id="photosTabUpload-${sme.id}" multiple accept="image/*" style="display:none" onchange="uploadPhotosAndRefresh('${sme.id}', this.files)" />
+        </div>
+      </div>
+      <div class="photos-grid">${grid}</div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger);padding:20px;text-align:center">Failed to load photos: ${e.message}</div>`;
+  }
 }
 
 function renderWebsiteTab(sme) {
@@ -2776,6 +2859,37 @@ async function uploadPhotos(smeId, files) {
   }
   if (uploaded > 0) {
     toast(`${uploaded} photo${uploaded > 1 ? 's' : ''} uploaded`, 'success');
+  }
+}
+
+async function uploadPhotosAndRefresh(smeId, files) {
+  await uploadPhotos(smeId, files);
+  if (state.currentSme) renderPhotosTab(state.currentSme);
+}
+
+async function deletePhoto(smeId, imageId) {
+  try {
+    await api('DELETE', `/smes/${smeId}/images/${imageId}`);
+    // Remove the card from DOM immediately for snappy feel
+    const cards = document.querySelectorAll('.photo-card');
+    for (const card of cards) {
+      const btn = card.querySelector('.photo-delete');
+      if (btn && btn.getAttribute('onclick')?.includes(imageId)) {
+        card.style.transition = 'opacity .2s, transform .2s';
+        card.style.opacity = '0';
+        card.style.transform = 'scale(0.8)';
+        setTimeout(() => {
+          card.remove();
+          // Update counter
+          const remaining = document.querySelectorAll('.photo-card').length;
+          if (remaining === 0 && state.currentSme) renderPhotosTab(state.currentSme);
+        }, 200);
+        break;
+      }
+    }
+    toast('Photo deleted', 'success');
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, 'error');
   }
 }
 

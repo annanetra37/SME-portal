@@ -1921,6 +1921,23 @@ app.get('/api/smes/:id/email', async (req, res) => {
 });
 
 // ── Manual photo upload ───────────────────────────────────────────────────────
+app.get('/api/smes/:id/images', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, data, platform, source_url, caption, scraped_at FROM sme_images WHERE sme_id=$1 ORDER BY scraped_at DESC',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/smes/:id/images/:imageId', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM sme_images WHERE id=$1 AND sme_id=$2', [req.params.imageId, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/smes/:id/upload-photo', async (req, res) => {
   const { data } = req.body;  // base64 data URI
   if (!data || !data.startsWith('data:image/')) {
