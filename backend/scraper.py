@@ -270,13 +270,15 @@ def scrape_instagram(handle: str, web_dir: Path, tmp_dir: Path, max_images: int)
             log.warning("Skipping post %s: %s", media.pk, e)
             continue
 
-        for p in paths:
+        for idx, p in enumerate(paths):
             if len(records) >= max_images:
                 break
+            # Each carousel slide gets a unique source_url suffix
+            slide_suffix = f"?img_index={idx+1}" if len(paths) > 1 else ""
             meta = {
                 "platform": "instagram",
                 "handle": handle,
-                "source_url": f"https://www.instagram.com/p/{media.code}/",
+                "source_url": f"https://www.instagram.com/p/{media.code}/{slide_suffix}",
                 "caption": (media.caption_text or "")[:300],
                 "likes": media.like_count,
             }

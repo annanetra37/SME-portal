@@ -100,6 +100,15 @@ async function ensureSchema() {
     `ALTER TABLE smes ALTER COLUMN contact_email DROP NOT NULL`,
     // Drop FK on sme_images.sme_id — UUID vs TEXT mismatch breaks fresh deployments
     `ALTER TABLE sme_images DROP CONSTRAINT IF EXISTS sme_images_sme_id_fkey`,
+    // Remove existing duplicate images (keep first inserted per sme_id+source_url)
+    `DELETE FROM sme_images WHERE id IN (
+       SELECT id FROM (
+         SELECT id, ROW_NUMBER() OVER (PARTITION BY sme_id, source_url ORDER BY scraped_at) AS rn
+         FROM sme_images WHERE source_url IS NOT NULL
+       ) dupes WHERE rn > 1
+     )`,
+    // Prevent duplicate images per SME (same source_url)
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_sme_images_sme_source ON sme_images(sme_id, source_url) WHERE source_url IS NOT NULL`,
   ]) {
     try { await pool.query(sql); } catch (_) {}
   }
@@ -753,13 +762,19 @@ async function scrapeAndStoreImages(sme, maxImages = 15, logCb = null, abortCtx 
       try {
         const buf = readFileSync(rec.path);
         const dataUri = `data:image/jpeg;base64,${buf.toString('base64')}`;
-        await pool.query(
+        const insertResult = await pool.query(
           `INSERT INTO sme_images (sme_id, data, platform, source_url, caption)
-           VALUES ($1,$2,$3,$4,$5)`,
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (sme_id, source_url) WHERE source_url IS NOT NULL DO NOTHING
+           RETURNING id`,
           [sme.id, dataUri, rec.platform || null, rec.source_url || null, rec.caption || null]
         );
-        allDataUris.push(dataUri);
-        _log(`Stored image [${allDataUris.length}/${maxImages}] from ${rec.platform || 'social'}`);
+        if (insertResult.rowCount > 0) {
+          allDataUris.push(dataUri);
+          _log(`Stored image [${allDataUris.length}/${maxImages}] from ${rec.platform || 'social'}`);
+        } else {
+          _log(`Skipped duplicate image (${rec.source_url?.split('/p/')[1] || 'unknown'})`);
+        }
       } catch (e) {
         _log(`Failed to store image: ${e.message}`);
       }
