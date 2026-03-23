@@ -1081,7 +1081,8 @@ ABSOLUTE RULES:
 - Output ONLY the complete raw HTML. No markdown fences, no explanation, no comments outside the HTML.
 - The HTML file MUST be fully complete — it MUST end with </html>. NEVER stop generating mid-way.
 - Single self-contained file: all CSS and JS must be inline (inside <style> and <script> tags).
-- Fully mobile-responsive (use media queries or CSS grid/flex).
+- Fully mobile-responsive (use media queries or CSS grid/flex). Test every section mentally at 360px, 768px, and 1200px+ widths — no overflow, no cut-off text, no tiny tap targets on mobile.
+- The ENTIRE website must be in ONE language only — the same language used for the business name/description/location. Do NOT mix languages across sections (e.g. English headers with Arabic body text). Every heading, paragraph, button label, form placeholder, footer text, and CTA must be in the same language.
 - No Lorem Ipsum — every word of copy must be real, specific to this business.
 - The visual identity (palette, typography, layout, section names, tone of copy) must be \
 unmistakably industry-specific — not a generic business template with colours swapped.
@@ -1974,7 +1975,9 @@ app.post('/api/smes/:id/edit-website', async (req, res) => {
       model: 'claude-sonnet-4-6', max_tokens: 64000,
       system: `You are an expert website editor. You receive an existing HTML website and a modification instruction.
 Apply the requested change precisely. Output ONLY the complete modified HTML — no explanation, no markdown fences.
-Keep everything else exactly the same. The output must be a complete, working HTML file ending with </html>.`,
+Keep everything else exactly the same. The output must be a complete, working HTML file ending with </html>.
+IMPORTANT: The website must remain fully mobile-responsive (no overflow, no cut-off text at any screen size).
+IMPORTANT: The entire website must stay in ONE language — do NOT introduce text in a different language than what is already used.`,
       messages: [{ role: 'user', content: `Here is the current website HTML:\n\n${currentHtml}\n\n━━━ MODIFICATION REQUEST ━━━\n${instruction}\n\nApply this change and output the complete modified HTML.` }],
     });
     const r = await stream.finalMessage();
