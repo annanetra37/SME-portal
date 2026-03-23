@@ -1920,6 +1920,67 @@ app.get('/api/smes/:id/email', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Manual photo upload ───────────────────────────────────────────────────────
+app.post('/api/smes/:id/upload-photo', async (req, res) => {
+  const { data } = req.body;  // base64 data URI
+  if (!data || !data.startsWith('data:image/')) {
+    return res.status(400).json({ error: 'Invalid image data' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO sme_images (sme_id, data, platform, source_url, caption)
+       VALUES ($1,$2,'manual-upload',null,null)`,
+      [req.params.id, data]
+    );
+    const { rows } = await pool.query('SELECT COUNT(*) as count FROM sme_images WHERE sme_id=$1', [req.params.id]);
+    res.json({ ok: true, totalImages: parseInt(rows[0].count) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Website editing agent ─────────────────────────────────────────────────────
+app.post('/api/smes/:id/edit-website', async (req, res) => {
+  const { instruction } = req.body;
+  if (!instruction) return res.status(400).json({ error: 'Instruction required' });
+
+  const { rows: smeRows } = await pool.query('SELECT * FROM smes WHERE id=$1', [req.params.id]);
+  if (!smeRows[0]) return res.status(404).json({ error: 'SME not found' });
+
+  const { rows: siteRows } = await pool.query('SELECT html FROM websites WHERE sme_id=$1', [req.params.id]);
+  if (!siteRows[0]) return res.status(404).json({ error: 'No website to edit — build one first' });
+
+  const currentHtml = siteRows[0].html;
+
+  try {
+    const ct = newCost();
+    const edited = await claude(
+      `You are an expert website editor. You receive an existing HTML website and a modification instruction.
+Apply the requested change precisely. Output ONLY the complete modified HTML — no explanation, no markdown fences.
+Keep everything else exactly the same. The output must be a complete, working HTML file ending with </html>.`,
+      `Here is the current website HTML:\n\n${currentHtml}\n\n━━━ MODIFICATION REQUEST ━━━\n${instruction}\n\nApply this change and output the complete modified HTML.`,
+      64000, ct
+    );
+
+    let html = edited.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
+
+    // Ensure GA tag is preserved
+    const gaTag = `<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-87YZHB9TR1"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', 'G-87YZHB9TR1');\n</script>`;
+    if (!html.includes('G-87YZHB9TR1')) {
+      html = html.replace(/<head>/i, `<head>\n${gaTag}`);
+    }
+
+    await pool.query(
+      `UPDATE websites SET html=$2, built_at=NOW() WHERE sme_id=$1`,
+      [req.params.id, html]
+    );
+
+    const cost = await saveCost(ct, 'website_edit', { smeId: req.params.id, smeName: smeRows[0].name });
+    res.json({ ok: true, cost });
+  } catch (e) {
+    console.error('Website edit error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Cost tracking endpoints (MUST be before SPA wildcard) ────────────────────
 
 app.get('/api/costs', async (req, res) => {

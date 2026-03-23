@@ -2072,6 +2072,10 @@ function renderDetailActions(sme) {
         📸 Scrape Photos
       </button>
     ` : ''}
+    <button class="btn btn-secondary btn-sm" onclick="document.getElementById('photoUpload-${sme.id}').click()" title="Upload photos manually">
+      📤 Upload Photos
+    </button>
+    <input type="file" id="photoUpload-${sme.id}" multiple accept="image/*" style="display:none" onchange="uploadPhotos('${sme.id}', this.files)" />
     ${hasWebsite ? `
       <button class="btn btn-secondary btn-sm" onclick="deploySite('${sme.id}')" id="deployBtn-${sme.id}">
         ${site?.deployedUrl ? '✅ Deployed' : '🚀 Deploy'}
@@ -2243,6 +2247,17 @@ function renderWebsiteTab(sme) {
       <button class="btn btn-secondary btn-sm" onclick="buildWebsite('${sme.id}')">🔄 Rebuild</button>
       ${!deployedUrl ? `<button class="btn btn-success btn-sm" onclick="deploySite('${sme.id}')">🚀 Deploy Site</button>` : ''}
       ${site.buildCost ? `<span style="font-size:11px;color:var(--muted);margin-left:auto" title="Input: ${site.buildCost.inputTokens.toLocaleString()} tokens · Output: ${site.buildCost.outputTokens.toLocaleString()} tokens · ${site.buildCost.searches} searches">💰 Build cost: <strong style="color:var(--warning)">${site.buildCost.display}</strong></span>` : ''}
+    </div>
+
+    <div class="website-editor" style="margin-top:20px; border-top:1px solid var(--border); padding-top:16px">
+      <div style="font-size:13px; font-weight:600; margin-bottom:10px; color:var(--text)">✏️ Website Editor Agent</div>
+      <div id="editChat-${sme.id}" style="max-height:200px; overflow-y:auto; margin-bottom:10px; display:flex; flex-direction:column; gap:6px"></div>
+      <div style="display:flex; gap:8px">
+        <input type="text" id="editInput-${sme.id}" placeholder="e.g. Change the hero background to dark blue, make the logo bigger…"
+          style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:8px 12px; color:var(--text); font-size:13px; outline:none; font-family:'DM Sans',sans-serif"
+          onkeydown="if(event.key==='Enter')editWebsite('${sme.id}')" />
+        <button class="btn btn-primary btn-sm" onclick="editWebsite('${sme.id}')" id="editWebsiteBtn-${sme.id}">Send</button>
+      </div>
     </div>
   `;
 }
@@ -2739,6 +2754,74 @@ async function quickSetStatus(smeId, targetStatus) {
     const labels = { contacted: '📞 Contacted', customer_converted: '🤝 Customer Converted', discovered: 'Discovered', rejected: '❌ Rejected' };
     toast(`${labels[newStatus] || newStatus}`, 'success');
   } catch (e) { toast(`Status update failed: ${e.message}`, 'error'); }
+}
+
+// ─── Manual photo upload ──────────────────
+async function uploadPhotos(smeId, files) {
+  if (!files || !files.length) return;
+  let uploaded = 0;
+  for (const file of files) {
+    try {
+      const dataUri = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await api('POST', `/smes/${smeId}/upload-photo`, { data: dataUri });
+      uploaded++;
+    } catch (e) {
+      toast(`Failed to upload ${file.name}: ${e.message}`, 'error');
+    }
+  }
+  if (uploaded > 0) {
+    toast(`${uploaded} photo${uploaded > 1 ? 's' : ''} uploaded`, 'success');
+  }
+}
+
+// ─── Website editing agent ────────────────
+async function editWebsite(smeId) {
+  const input = document.getElementById(`editInput-${smeId}`);
+  const btn = document.getElementById(`editWebsiteBtn-${smeId}`);
+  const chat = document.getElementById(`editChat-${smeId}`);
+  if (!input || !input.value.trim()) return;
+
+  const instruction = input.value.trim();
+  input.value = '';
+
+  // Show user message
+  chat.innerHTML += `<div style="align-self:flex-end;background:var(--accent);color:white;padding:6px 12px;border-radius:10px 10px 2px 10px;font-size:12px;max-width:80%">${instruction}</div>`;
+  chat.scrollTop = chat.scrollHeight;
+
+  // Show loading
+  btn.disabled = true;
+  btn.textContent = '⏳…';
+  chat.innerHTML += `<div id="editLoading-${smeId}" style="color:var(--muted);font-size:12px;padding:4px 8px">✨ Editing website…</div>`;
+  chat.scrollTop = chat.scrollHeight;
+
+  try {
+    const result = await api('POST', `/smes/${smeId}/edit-website`, { instruction });
+    // Remove loading
+    const loader = document.getElementById(`editLoading-${smeId}`);
+    if (loader) loader.remove();
+    // Show success
+    chat.innerHTML += `<div style="background:var(--surface2);padding:6px 12px;border-radius:10px 10px 10px 2px;font-size:12px;max-width:80%;color:var(--success)">✅ Done! ${result.cost?.display ? '('+result.cost.display+')' : ''}</div>`;
+    chat.scrollTop = chat.scrollHeight;
+    // Reload website preview
+    try {
+      const site = await api('GET', `/smes/${smeId}/website`);
+      state.websites[smeId] = site;
+      renderWebsiteTab(state.currentSme);
+    } catch (_) {}
+  } catch (e) {
+    const loader = document.getElementById(`editLoading-${smeId}`);
+    if (loader) loader.remove();
+    chat.innerHTML += `<div style="background:#ff4d6d20;padding:6px 12px;border-radius:10px;font-size:12px;color:var(--danger)">❌ ${e.message}</div>`;
+    chat.scrollTop = chat.scrollHeight;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send';
+  }
 }
 
 // ─── Notes (all statuses) ─────────────────
