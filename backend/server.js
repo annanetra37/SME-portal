@@ -1281,26 +1281,37 @@ ${designGuide}
 
     if (logFn) logFn(`Script check: ${nativeChars} ${scriptName} chars, ${latinCount} suspicious Latin words`, 'info');
 
-    if (nativeChars < 50 || (latinCount > 20 && latinCount > nativeChars * 0.5)) {
-      if (logFn) logFn(`FAILED script validation — too few ${scriptName} characters or too much Latin text. Regenerating with fix prompt…`, 'warn');
+    // Always run correction pass if ANY suspicious Latin words remain (even a few in the footer)
+    if (nativeChars < 50 || latinCount > 5) {
+      if (logFn) logFn(`Script validation: ${latinCount} Latin words detected — running correction pass to ensure pure ${scriptName} script…`, 'warn');
 
       // Retry: send the bad HTML back with a correction prompt
-      const fixPrompt = `The website below has a CRITICAL problem: the text is written in Latin-transliterated ${scriptName} instead of actual ${scriptName} script.
+      const suspiciousExamples = latinWords.slice(0, 30).join('", "');
+      const fixPrompt = `The website HTML below still contains Latin-transliterated ${scriptName} words that MUST be converted to actual ${scriptName} script.
 
-EVERY piece of visible text (headings, paragraphs, buttons, labels, placeholders, CTAs, nav items, footer) must be rewritten in ACTUAL ${scriptName} Unicode characters. Do NOT use Latin letters for ${scriptName} words.
+FOUND THESE LATIN WORDS THAT NEED FIXING: "${suspiciousExamples}"
 
-For example, transliterated words like "Senyak", "Ngeshnchоum", "Anranky", "Uarkel", "Lracutyun", "Apevar", "Helaphone", "Kazmanahaninn", "Korcitutyune" must all be replaced with their ${scriptName}-script equivalents.
+INSTRUCTIONS — scan EVERY part of the HTML and fix ALL of these:
+1. FOOTER: section titles like "Kontakt", navigation links like "Lusankarner", "Kap Hastkanel", "Arunadranq", "Nar Advantage", descriptions
+2. NAVIGATION / MENU: all nav links and menu items
+3. HEADINGS: section headers, h1-h6 tags
+4. PARAGRAPHS: all body text, descriptions, about sections
+5. BUTTONS & CTAs: button labels, submit text, call-to-action text
+6. FORM LABELS & PLACEHOLDERS: input labels, placeholder text, select options
+7. COPYRIGHT: footer copyright text
+8. ANY other visible text
 
-The ONLY Latin text allowed: the brand name (if natively Latin like "Ruben Store"), "WhatsApp", "Facebook", "Instagram", and phone numbers.
+Replace EVERY Latin-transliterated ${scriptName} word with its proper ${scriptName}-script equivalent.
 
-Output the COMPLETE corrected HTML. No explanations, no markdown fences.
+The ONLY Latin text allowed: brand name "${sme.name}", "WhatsApp", "Facebook", "Instagram", "@" handles, URLs, and phone numbers like "+374...", "098...".
+
+Output the COMPLETE corrected HTML file. No explanations, no markdown fences.
 
 ${html}`;
 
-      const fixCt = newCost();
       const fixStream = anthropic.messages.stream({
         model: 'claude-sonnet-4-6', max_tokens: MAX_TOKENS,
-        system: `You are a translator and web developer. Fix the given HTML so ALL visible text uses ${scriptName} script. Output only the complete corrected HTML.`,
+        system: `You are an expert ${scriptName} translator and web developer. Your job: find EVERY Latin-transliterated ${scriptName} word in the HTML and replace it with the correct ${scriptName}-script equivalent. You must check ALL sections including footer, nav, forms, buttons, headings, and paragraphs. Output only the complete corrected HTML.`,
         messages: [{ role: 'user', content: fixPrompt }],
       });
 
