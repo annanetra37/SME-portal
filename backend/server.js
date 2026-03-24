@@ -1084,7 +1084,25 @@ ABSOLUTE RULES:
 - The HTML file MUST be fully complete — it MUST end with </html>. NEVER stop generating mid-way.
 - Single self-contained file: all CSS and JS must be inline (inside <style> and <script> tags).
 - Fully mobile-responsive (use media queries or CSS grid/flex). Test every section mentally at 360px, 768px, and 1200px+ widths — no overflow, no cut-off text, no tiny tap targets on mobile.
-- The ENTIRE website must be in ONE language only — the same language used for the business name/description/location. Do NOT mix languages across sections (e.g. English headers with Arabic body text). Every heading, paragraph, button label, form placeholder, footer text, and CTA must be in the same language.
+
+━━━ CRITICAL LANGUAGE RULE ━━━
+This is the MOST IMPORTANT rule. Violations are unacceptable:
+- Determine the PRIMARY LANGUAGE of the business from its location and description.
+- The ENTIRE website — EVERY heading, paragraph, button, label, placeholder, CTA, nav item, \
+footer text, section title, testimonial, product name, product description — must be written \
+in that ONE language using its NATIVE SCRIPT.
+- For Armenian businesses → write EVERYTHING in Armenian (Հայերեն) using the Armenian alphabet (Ա-Ֆ).
+- For Arabic businesses → write EVERYTHING in Arabic using Arabic script.
+- For Russian businesses → write EVERYTHING in Russian using Cyrillic script.
+- NEVER transliterate (e.g. do NOT write Armenian words in Latin letters like "Ngeshnchоum"). \
+Always use the native script of the language.
+- NEVER mix languages on the same page. If the business is in Armenia, do NOT put English \
+section titles, Russian paragraphs, or Latin-transliterated Armenian on the page.
+- The ONLY exception: the business name itself may stay as-is if it uses Latin letters as a brand name.
+- If the scraped social media content is in mixed languages or transliterated, you MUST \
+rewrite/translate ALL of it into the single chosen language using native script.
+- When in doubt about which language to use, pick the local language of the business location.
+
 - No Lorem Ipsum — every word of copy must be real, specific to this business.
 - The visual identity (palette, typography, layout, section names, tone of copy) must be \
 unmistakably industry-specific — not a generic business template with colours swapped.
@@ -1098,7 +1116,30 @@ IntersectionObserver code that activates it. Never add CSS animation classes wit
 elements, navbar scroll-shadow toggle on window scroll, and mobile hamburger menu toggle. \
 This script is REQUIRED even if the rest of the page has no JS.`;
 
+  // Derive target language from location
+  const loc = (sme.location || '').toLowerCase();
+  let targetLang = 'the local language of the business location';
+  if (loc.includes('armenia') || loc.includes('yerevan') || loc.includes('gyumri') || loc.includes('vanadzor'))
+    targetLang = 'Armenian (Հայերեն) using the Armenian alphabet (Ա-Ֆ)';
+  else if (loc.includes('egypt') || loc.includes('cairo') || loc.includes('morocco') || loc.includes('saudi') || loc.includes('dubai') || loc.includes('uae') || loc.includes('jordan') || loc.includes('lebanon') || loc.includes('iraq'))
+    targetLang = 'Arabic (العربية) using Arabic script — set dir="rtl" on <html>';
+  else if (loc.includes('russia') || loc.includes('moscow') || loc.includes('petersburg'))
+    targetLang = 'Russian (Русский) using Cyrillic script';
+  else if (loc.includes('france') || loc.includes('paris'))
+    targetLang = 'French (Français)';
+  else if (loc.includes('spain') || loc.includes('madrid') || loc.includes('barcelona'))
+    targetLang = 'Spanish (Español)';
+  else if (loc.includes('germany') || loc.includes('berlin') || loc.includes('munich'))
+    targetLang = 'German (Deutsch)';
+  else if (loc.includes('georgia') || loc.includes('tbilisi'))
+    targetLang = 'Georgian (ქართული) using Georgian script';
+
   const userPrompt = `Build a complete, unique, production-ready website for this business.
+
+⚠️ LANGUAGE: Write the ENTIRE website in ${targetLang}. Every heading, paragraph, button, \
+label, product name, CTA, and footer must be in this language using its native script. \
+Do NOT transliterate. Do NOT mix languages. If the scraped content below is in mixed \
+languages or transliterated, rewrite it properly in ${targetLang}.
 
 ━━━ BUSINESS DATA ━━━
 Name:         ${sme.name}
