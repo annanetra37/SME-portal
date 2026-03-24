@@ -1085,23 +1085,16 @@ ABSOLUTE RULES:
 - Single self-contained file: all CSS and JS must be inline (inside <style> and <script> tags).
 - Fully mobile-responsive (use media queries or CSS grid/flex). Test every section mentally at 360px, 768px, and 1200px+ widths — no overflow, no cut-off text, no tiny tap targets on mobile.
 
-━━━ CRITICAL LANGUAGE RULE ━━━
-This is the MOST IMPORTANT rule. Violations are unacceptable:
-- Determine the PRIMARY LANGUAGE of the business from its location and description.
-- The ENTIRE website — EVERY heading, paragraph, button, label, placeholder, CTA, nav item, \
-footer text, section title, testimonial, product name, product description — must be written \
-in that ONE language using its NATIVE SCRIPT.
-- For Armenian businesses → write EVERYTHING in Armenian (Հայերեն) using the Armenian alphabet (Ա-Ֆ).
-- For Arabic businesses → write EVERYTHING in Arabic using Arabic script.
-- For Russian businesses → write EVERYTHING in Russian using Cyrillic script.
-- NEVER transliterate (e.g. do NOT write Armenian words in Latin letters like "Ngeshnchоum"). \
-Always use the native script of the language.
-- NEVER mix languages on the same page. If the business is in Armenia, do NOT put English \
-section titles, Russian paragraphs, or Latin-transliterated Armenian on the page.
-- The ONLY exception: the business name itself may stay as-is if it uses Latin letters as a brand name.
-- If the scraped social media content is in mixed languages or transliterated, you MUST \
-rewrite/translate ALL of it into the single chosen language using native script.
-- When in doubt about which language to use, pick the local language of the business location.
+LANGUAGE RULE (most important — violations cause automatic regeneration):
+- ALL visible text must use the NATIVE SCRIPT of the target language.
+- Transliteration (writing non-Latin languages in Latin a-z letters) is FORBIDDEN.
+- Armenian: use ONLY Armenian Unicode characters. Words like "Senyak", "Anranky", "Uarkel", \
+"Lracutyun", "Apevar", "Helaphone", "Kazmanahaninn" are Latin-transliterated Armenian and MUST NOT appear.
+- Arabic: use ONLY Arabic script. Set dir="rtl" on html tag.
+- Russian: use ONLY Cyrillic script.
+- Georgian: use ONLY Georgian script.
+- Only allowed Latin text: brand name (if natively Latin), "WhatsApp", "Facebook", "Instagram", phone numbers.
+- If scraped content is transliterated or mixed-language, TRANSLATE it into proper native script.
 
 - No Lorem Ipsum — every word of copy must be real, specific to this business.
 - The visual identity (palette, typography, layout, section names, tone of copy) must be \
@@ -1118,28 +1111,42 @@ This script is REQUIRED even if the rest of the page has no JS.`;
 
   // Derive target language from location
   const loc = (sme.location || '').toLowerCase();
-  let targetLang = 'the local language of the business location';
-  if (loc.includes('armenia') || loc.includes('yerevan') || loc.includes('gyumri') || loc.includes('vanadzor'))
+  let targetLang = '';
+  let scriptRegex = null;  // regex to validate native script usage
+  let scriptName = '';
+  if (loc.includes('armenia') || loc.includes('yerevan') || loc.includes('gyumri') || loc.includes('vanadzor')) {
     targetLang = 'Armenian (Հայերեն) using the Armenian alphabet (Ա-Ֆ)';
-  else if (loc.includes('egypt') || loc.includes('cairo') || loc.includes('morocco') || loc.includes('saudi') || loc.includes('dubai') || loc.includes('uae') || loc.includes('jordan') || loc.includes('lebanon') || loc.includes('iraq'))
+    scriptRegex = /[\u0530-\u058F]/g;
+    scriptName = 'Armenian';
+  } else if (loc.includes('egypt') || loc.includes('cairo') || loc.includes('morocco') || loc.includes('saudi') || loc.includes('dubai') || loc.includes('uae') || loc.includes('jordan') || loc.includes('lebanon') || loc.includes('iraq')) {
     targetLang = 'Arabic (العربية) using Arabic script — set dir="rtl" on <html>';
-  else if (loc.includes('russia') || loc.includes('moscow') || loc.includes('petersburg'))
+    scriptRegex = /[\u0600-\u06FF]/g;
+    scriptName = 'Arabic';
+  } else if (loc.includes('russia') || loc.includes('moscow') || loc.includes('petersburg')) {
     targetLang = 'Russian (Русский) using Cyrillic script';
-  else if (loc.includes('france') || loc.includes('paris'))
-    targetLang = 'French (Français)';
-  else if (loc.includes('spain') || loc.includes('madrid') || loc.includes('barcelona'))
-    targetLang = 'Spanish (Español)';
-  else if (loc.includes('germany') || loc.includes('berlin') || loc.includes('munich'))
-    targetLang = 'German (Deutsch)';
-  else if (loc.includes('georgia') || loc.includes('tbilisi'))
+    scriptRegex = /[\u0400-\u04FF]/g;
+    scriptName = 'Cyrillic';
+  } else if (loc.includes('georgia') || loc.includes('tbilisi')) {
     targetLang = 'Georgian (ქართული) using Georgian script';
+    scriptRegex = /[\u10A0-\u10FF]/g;
+    scriptName = 'Georgian';
+  } else if (loc.includes('france') || loc.includes('paris')) {
+    targetLang = 'French (Français)';
+  } else if (loc.includes('spain') || loc.includes('madrid') || loc.includes('barcelona')) {
+    targetLang = 'Spanish (Español)';
+  } else if (loc.includes('germany') || loc.includes('berlin') || loc.includes('munich')) {
+    targetLang = 'German (Deutsch)';
+  } else {
+    targetLang = 'the local language of the business location';
+  }
 
   const userPrompt = `Build a complete, unique, production-ready website for this business.
 
-⚠️ LANGUAGE: Write the ENTIRE website in ${targetLang}. Every heading, paragraph, button, \
-label, product name, CTA, and footer must be in this language using its native script. \
-Do NOT transliterate. Do NOT mix languages. If the scraped content below is in mixed \
-languages or transliterated, rewrite it properly in ${targetLang}.
+⚠️ LANGUAGE: ${targetLang}
+ALL visible text must be in this language using its NATIVE SCRIPT — not Latin transliteration. \
+The output will be automatically validated: if native script characters are missing, the website is REJECTED. \
+If the scraped content below is transliterated (Armenian words in Latin letters, etc.), you MUST \
+translate/rewrite them into proper native script characters. Do NOT copy transliterated text as-is.
 
 ━━━ BUSINESS DATA ━━━
 Name:         ${sme.name}
@@ -1249,6 +1256,67 @@ ${designGuide}
 
   // Strip any accidental markdown fences
   html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // ── Script validation: ensure native script is actually used ──────────────
+  if (scriptRegex) {
+    // Extract only visible text (strip tags, scripts, styles)
+    const visibleText = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ');
+    const nativeChars = (visibleText.match(scriptRegex) || []).length;
+    const latinWords = (visibleText.match(/[a-zA-Z]{4,}/g) || [])
+      .filter(w => !['html','http','https','style','script','class','href','WhatsApp','Facebook',
+        'Instagram','width','height','none','display','flex','grid','font','background','color',
+        'border','margin','padding','section','button','input','form','textarea','select','option',
+        'placeholder','type','submit','email','phone','text','hidden','content','auto','center',
+        'relative','absolute','fixed','block','inline','solid','normal','bold','italic','serif',
+        'sans','rgba','linear','gradient','translate','scale','opacity','transition','animation',
+        'overflow','scroll','wrap','column','space','between','around','evenly','start','end',
+        'cover','contain','repeat','position','index','left','right','bottom','header','footer',
+        'main','article','aside','head','body','meta','link','title','charset','viewport',
+        'Ruben','Store','Trade','Vedi'].includes(w));
+    const latinCount = latinWords.length;
+
+    if (logFn) logFn(`Script check: ${nativeChars} ${scriptName} chars, ${latinCount} suspicious Latin words`, 'info');
+
+    if (nativeChars < 50 || (latinCount > 20 && latinCount > nativeChars * 0.5)) {
+      if (logFn) logFn(`FAILED script validation — too few ${scriptName} characters or too much Latin text. Regenerating with fix prompt…`, 'warn');
+
+      // Retry: send the bad HTML back with a correction prompt
+      const fixPrompt = `The website below has a CRITICAL problem: the text is written in Latin-transliterated ${scriptName} instead of actual ${scriptName} script.
+
+EVERY piece of visible text (headings, paragraphs, buttons, labels, placeholders, CTAs, nav items, footer) must be rewritten in ACTUAL ${scriptName} Unicode characters. Do NOT use Latin letters for ${scriptName} words.
+
+For example, transliterated words like "Senyak", "Ngeshnchоum", "Anranky", "Uarkel", "Lracutyun", "Apevar", "Helaphone", "Kazmanahaninn", "Korcitutyune" must all be replaced with their ${scriptName}-script equivalents.
+
+The ONLY Latin text allowed: the brand name (if natively Latin like "Ruben Store"), "WhatsApp", "Facebook", "Instagram", and phone numbers.
+
+Output the COMPLETE corrected HTML. No explanations, no markdown fences.
+
+${html}`;
+
+      const fixCt = newCost();
+      const fixStream = anthropic.messages.stream({
+        model: 'claude-sonnet-4-6', max_tokens: MAX_TOKENS,
+        system: `You are a translator and web developer. Fix the given HTML so ALL visible text uses ${scriptName} script. Output only the complete corrected HTML.`,
+        messages: [{ role: 'user', content: fixPrompt }],
+      });
+
+      html = '';
+      fixStream.on('text', (text) => { html += text; });
+      await fixStream.finalMessage().then(msg => {
+        if (ct && msg.usage) {
+          ct.inputTokens  += msg.usage.input_tokens  || 0;
+          ct.outputTokens += msg.usage.output_tokens || 0;
+        }
+      });
+      html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
+
+      if (logFn) logFn(`Correction pass complete — ${Math.round(html.length / 1024)}kb`, 'ok');
+    }
+  }
 
   // Inject actual base64 image data URIs in place of placeholders
   images.forEach((dataUri, i) => {
