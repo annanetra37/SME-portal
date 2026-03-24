@@ -1521,7 +1521,7 @@ function getEmoji(industry = '') {
 }
 
 // ─── API helpers ───────────────────────────────────────
-async function api(method, path, body) {
+async function api(method, path, body, { silent = false } = {}) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   if (body) opts.body = JSON.stringify(body);
   try {
@@ -1530,7 +1530,7 @@ async function api(method, path, body) {
     if (!r.ok) throw new Error(data.error || 'Request failed');
     return data;
   } catch (e) {
-    toast(e.message, 'error');
+    if (!silent) toast(e.message, 'error');
     throw e;
   }
 }
@@ -1737,7 +1737,7 @@ async function showCountryView(country) {
     // Reload websites and emails for SMEs that may have them
     await Promise.all(smes.filter(s => s.status !== 'discovered').map(async s => {
       try {
-        const site = await api('GET', `/smes/${s.id}/website`);
+        const site = await api('GET', `/smes/${s.id}/website`, null, { silent: true });
         state.websites[s.id] = site;
       } catch {}
       // Silently try email — no toast on 404
@@ -1766,7 +1766,7 @@ async function loadCountries() {
         // Pre-load websites and emails for any SME that may have them
         await Promise.all(smes.filter(s => s.status !== 'discovered').map(async s => {
           try {
-            const site = await api('GET', `/smes/${s.id}/website`);
+            const site = await api('GET', `/smes/${s.id}/website`, null, { silent: true });
             state.websites[s.id] = site;
           } catch {}
           // Silently try email — no toast on 404
