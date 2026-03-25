@@ -1216,39 +1216,58 @@ ${designGuide}
 </script>
 8. The file MUST end with </body></html> — generate the entire page without stopping early.`;
 
-  const MAX_TOKENS = 32000;
+  const MAX_TOKENS = 64000;
+
+  // Helper: stream a Claude request and collect the HTML
+  async function streamGenerate(sys, usr, label) {
+    let result = '';
+    let lastLogAt = Date.now();
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6', max_tokens: MAX_TOKENS,
+      system: sys, messages: [{ role: 'user', content: usr }],
+    });
+    stream.on('text', (text) => {
+      result += text;
+      const now = Date.now();
+      if (logFn && now - lastLogAt > 2500) {
+        logFn(`${label}… ${Math.round(result.length / 1024)}kb / ~${result.split('\n').length} lines`, 'info');
+        lastLogAt = now;
+      }
+    });
+    const msg = await stream.finalMessage();
+    if (ct && msg.usage) {
+      ct.inputTokens  += msg.usage.input_tokens  || 0;
+      ct.outputTokens += msg.usage.output_tokens || 0;
+    }
+    return result;
+  }
+
+  // Helper: if HTML is truncated, send a continuation request
+  async function ensureComplete(partialHtml, label) {
+    let result = partialHtml;
+    let attempts = 0;
+    while (!result.trimEnd().endsWith('</html>') && attempts < 2) {
+      attempts++;
+      if (logFn) logFn(`HTML appears truncated (missing </html>). Sending continuation request #${attempts}…`, 'warn');
+      const contPrompt = `The HTML below was cut off mid-generation. Continue EXACTLY where it left off — do NOT restart from the beginning. Output ONLY the remaining HTML to complete the page. The output must end with </body></html>.
+
+${result.slice(-3000)}`;
+      const cont = await streamGenerate(
+        'You are completing a truncated HTML file. Output ONLY the remaining HTML starting exactly where the previous output ended. Do NOT repeat any already-generated content.',
+        contPrompt,
+        `${label} continuation #${attempts}`
+      );
+      result += cont.replace(/^```html\s*/i, '');
+      result = result.replace(/\s*```$/i, '').trim();
+    }
+    return result;
+  }
 
   let html;
 
   if (logFn) {
-    // Streaming mode — send live progress updates during generation
     logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: MAX_TOKENS,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
-
-    html = '';
-    let lastLogAt = Date.now();
-
-    stream.on('text', (text) => {
-      html += text;
-      const now = Date.now();
-      if (now - lastLogAt > 2500) {
-        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
-        lastLogAt = now;
-      }
-    });
-
-    await stream.finalMessage().then(msg => {
-      if (ct && msg.usage) {
-        ct.inputTokens  += msg.usage.input_tokens  || 0;
-        ct.outputTokens += msg.usage.output_tokens || 0;
-      }
-    });
-
+    html = await streamGenerate(systemPrompt, userPrompt, 'Generating HTML');
     logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
   } else {
     html = await claude(systemPrompt, userPrompt, MAX_TOKENS, ct);
@@ -1256,6 +1275,9 @@ ${designGuide}
 
   // Strip any accidental markdown fences
   html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  // Ensure the HTML is complete (not truncated)
+  html = await ensureComplete(html, 'Build');
 
   // ── Script validation: ensure native script is actually used ──────────────
   if (scriptRegex) {
@@ -1309,21 +1331,10 @@ Output the COMPLETE corrected HTML file. No explanations, no markdown fences.
 
 ${html}`;
 
-      const fixStream = anthropic.messages.stream({
-        model: 'claude-sonnet-4-6', max_tokens: MAX_TOKENS,
-        system: `You are an expert ${scriptName} translator and web developer. Your job: find EVERY Latin-transliterated ${scriptName} word in the HTML and replace it with the correct ${scriptName}-script equivalent. You must check ALL sections including footer, nav, forms, buttons, headings, and paragraphs. Output only the complete corrected HTML.`,
-        messages: [{ role: 'user', content: fixPrompt }],
-      });
-
-      html = '';
-      fixStream.on('text', (text) => { html += text; });
-      await fixStream.finalMessage().then(msg => {
-        if (ct && msg.usage) {
-          ct.inputTokens  += msg.usage.input_tokens  || 0;
-          ct.outputTokens += msg.usage.output_tokens || 0;
-        }
-      });
+      const fixSys = `You are an expert ${scriptName} translator and web developer. Your job: find EVERY Latin-transliterated ${scriptName} word in the HTML and replace it with the correct ${scriptName}-script equivalent. You must check ALL sections including footer, nav, forms, buttons, headings, and paragraphs. Output only the complete corrected HTML.`;
+      html = await streamGenerate(fixSys, fixPrompt, 'Language correction');
       html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
+      html = await ensureComplete(html, 'Correction');
 
       if (logFn) logFn(`Correction pass complete — ${Math.round(html.length / 1024)}kb`, 'ok');
     }
@@ -1333,6 +1344,13 @@ ${html}`;
   images.forEach((dataUri, i) => {
     html = html.replaceAll(`{{IMG_${i}}}`, dataUri);
   });
+
+  // ── Structural completeness check: must have real body content ──────────────
+  const sectionCount = (html.match(/<section/gi) || []).length;
+  const hasFooter = /<footer/i.test(html);
+  if (sectionCount < 3 || !hasFooter) {
+    if (logFn) logFn(`WARNING: Only ${sectionCount} <section> tags and footer=${hasFooter}. Page may be empty. Content length: ${html.length} chars.`, 'warn');
+  }
 
   // Inject Google Analytics tracking tag into <head>
   const gaTag = `<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-87YZHB9TR1"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', 'G-87YZHB9TR1');\n</script>`;
