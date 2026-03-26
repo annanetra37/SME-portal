@@ -1083,19 +1083,7 @@ ABSOLUTE RULES:
 - Output ONLY the complete raw HTML. No markdown fences, no explanation, no comments outside the HTML.
 - The HTML file MUST be fully complete — it MUST end with </html>. NEVER stop generating mid-way.
 - Single self-contained file: all CSS and JS must be inline (inside <style> and <script> tags).
-- Fully mobile-responsive (use media queries or CSS grid/flex). Test every section mentally at 360px, 768px, and 1200px+ widths — no overflow, no cut-off text, no tiny tap targets on mobile.
-
-LANGUAGE RULE (most important — violations cause automatic regeneration):
-- ALL visible text must use the NATIVE SCRIPT of the target language.
-- Transliteration (writing non-Latin languages in Latin a-z letters) is FORBIDDEN.
-- Armenian: use ONLY Armenian Unicode characters. Words like "Senyak", "Anranky", "Uarkel", \
-"Lracutyun", "Apevar", "Helaphone", "Kazmanahaninn" are Latin-transliterated Armenian and MUST NOT appear.
-- Arabic: use ONLY Arabic script. Set dir="rtl" on html tag.
-- Russian: use ONLY Cyrillic script.
-- Georgian: use ONLY Georgian script.
-- Only allowed Latin text: brand name (if natively Latin), "WhatsApp", "Facebook", "Instagram", phone numbers.
-- If scraped content is transliterated or mixed-language, TRANSLATE it into proper native script.
-
+- Fully mobile-responsive (use media queries or CSS grid/flex).
 - No Lorem Ipsum — every word of copy must be real, specific to this business.
 - The visual identity (palette, typography, layout, section names, tone of copy) must be \
 unmistakably industry-specific — not a generic business template with colours swapped.
@@ -1109,44 +1097,7 @@ IntersectionObserver code that activates it. Never add CSS animation classes wit
 elements, navbar scroll-shadow toggle on window scroll, and mobile hamburger menu toggle. \
 This script is REQUIRED even if the rest of the page has no JS.`;
 
-  // Derive target language from location
-  const loc = (sme.location || '').toLowerCase();
-  let targetLang = '';
-  let scriptRegex = null;  // regex to validate native script usage
-  let scriptName = '';
-  if (loc.includes('armenia') || loc.includes('yerevan') || loc.includes('gyumri') || loc.includes('vanadzor')) {
-    targetLang = 'Armenian (Հայերեն) using the Armenian alphabet (Ա-Ֆ)';
-    scriptRegex = /[\u0530-\u058F]/g;
-    scriptName = 'Armenian';
-  } else if (loc.includes('egypt') || loc.includes('cairo') || loc.includes('morocco') || loc.includes('saudi') || loc.includes('dubai') || loc.includes('uae') || loc.includes('jordan') || loc.includes('lebanon') || loc.includes('iraq')) {
-    targetLang = 'Arabic (العربية) using Arabic script — set dir="rtl" on <html>';
-    scriptRegex = /[\u0600-\u06FF]/g;
-    scriptName = 'Arabic';
-  } else if (loc.includes('russia') || loc.includes('moscow') || loc.includes('petersburg')) {
-    targetLang = 'Russian (Русский) using Cyrillic script';
-    scriptRegex = /[\u0400-\u04FF]/g;
-    scriptName = 'Cyrillic';
-  } else if (loc.includes('georgia') || loc.includes('tbilisi')) {
-    targetLang = 'Georgian (ქართული) using Georgian script';
-    scriptRegex = /[\u10A0-\u10FF]/g;
-    scriptName = 'Georgian';
-  } else if (loc.includes('france') || loc.includes('paris')) {
-    targetLang = 'French (Français)';
-  } else if (loc.includes('spain') || loc.includes('madrid') || loc.includes('barcelona')) {
-    targetLang = 'Spanish (Español)';
-  } else if (loc.includes('germany') || loc.includes('berlin') || loc.includes('munich')) {
-    targetLang = 'German (Deutsch)';
-  } else {
-    targetLang = 'the local language of the business location';
-  }
-
   const userPrompt = `Build a complete, unique, production-ready website for this business.
-
-⚠️ LANGUAGE: ${targetLang}
-ALL visible text must be in this language using its NATIVE SCRIPT — not Latin transliteration. \
-The output will be automatically validated: if native script characters are missing, the website is REJECTED. \
-If the scraped content below is transliterated (Armenian words in Latin letters, etc.), you MUST \
-translate/rewrite them into proper native script characters. Do NOT copy transliterated text as-is.
 
 ━━━ BUSINESS DATA ━━━
 Name:         ${sme.name}
@@ -1216,58 +1167,39 @@ ${designGuide}
 </script>
 8. The file MUST end with </body></html> — generate the entire page without stopping early.`;
 
-  const MAX_TOKENS = 64000;
-
-  // Helper: stream a Claude request and collect the HTML
-  async function streamGenerate(sys, usr, label) {
-    let result = '';
-    let lastLogAt = Date.now();
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6', max_tokens: MAX_TOKENS,
-      system: sys, messages: [{ role: 'user', content: usr }],
-    });
-    stream.on('text', (text) => {
-      result += text;
-      const now = Date.now();
-      if (logFn && now - lastLogAt > 2500) {
-        logFn(`${label}… ${Math.round(result.length / 1024)}kb / ~${result.split('\n').length} lines`, 'info');
-        lastLogAt = now;
-      }
-    });
-    const msg = await stream.finalMessage();
-    if (ct && msg.usage) {
-      ct.inputTokens  += msg.usage.input_tokens  || 0;
-      ct.outputTokens += msg.usage.output_tokens || 0;
-    }
-    return result;
-  }
-
-  // Helper: if HTML is truncated, send a continuation request
-  async function ensureComplete(partialHtml, label) {
-    let result = partialHtml;
-    let attempts = 0;
-    while (!result.trimEnd().endsWith('</html>') && attempts < 2) {
-      attempts++;
-      if (logFn) logFn(`HTML appears truncated (missing </html>). Sending continuation request #${attempts}…`, 'warn');
-      const contPrompt = `The HTML below was cut off mid-generation. Continue EXACTLY where it left off — do NOT restart from the beginning. Output ONLY the remaining HTML to complete the page. The output must end with </body></html>.
-
-${result.slice(-3000)}`;
-      const cont = await streamGenerate(
-        'You are completing a truncated HTML file. Output ONLY the remaining HTML starting exactly where the previous output ended. Do NOT repeat any already-generated content.',
-        contPrompt,
-        `${label} continuation #${attempts}`
-      );
-      result += cont.replace(/^```html\s*/i, '');
-      result = result.replace(/\s*```$/i, '').trim();
-    }
-    return result;
-  }
+  const MAX_TOKENS = 32000;
 
   let html;
 
   if (logFn) {
+    // Streaming mode — send live progress updates during generation
     logFn(`Sending request to Claude (up to ${MAX_TOKENS} tokens)…`, 'info');
-    html = await streamGenerate(systemPrompt, userPrompt, 'Generating HTML');
+    const stream = anthropic.messages.stream({
+      model: 'claude-sonnet-4-6',
+      max_tokens: MAX_TOKENS,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    html = '';
+    let lastLogAt = Date.now();
+
+    stream.on('text', (text) => {
+      html += text;
+      const now = Date.now();
+      if (now - lastLogAt > 2500) {
+        logFn(`Generating HTML… ${Math.round(html.length / 1024)}kb / ~${html.split('\n').length} lines`, 'info');
+        lastLogAt = now;
+      }
+    });
+
+    await stream.finalMessage().then(msg => {
+      if (ct && msg.usage) {
+        ct.inputTokens  += msg.usage.input_tokens  || 0;
+        ct.outputTokens += msg.usage.output_tokens || 0;
+      }
+    });
+
     logFn(`Claude finished — ${Math.round(html.length / 1024)}kb generated`, 'ok');
   } else {
     html = await claude(systemPrompt, userPrompt, MAX_TOKENS, ct);
@@ -1276,81 +1208,10 @@ ${result.slice(-3000)}`;
   // Strip any accidental markdown fences
   html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
 
-  // Ensure the HTML is complete (not truncated)
-  html = await ensureComplete(html, 'Build');
-
-  // ── Script validation: ensure native script is actually used ──────────────
-  if (scriptRegex) {
-    // Extract only visible text (strip tags, scripts, styles)
-    const visibleText = html
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ');
-    const nativeChars = (visibleText.match(scriptRegex) || []).length;
-    const latinWords = (visibleText.match(/[a-zA-Z]{4,}/g) || [])
-      .filter(w => !['html','http','https','style','script','class','href','WhatsApp','Facebook',
-        'Instagram','width','height','none','display','flex','grid','font','background','color',
-        'border','margin','padding','section','button','input','form','textarea','select','option',
-        'placeholder','type','submit','email','phone','text','hidden','content','auto','center',
-        'relative','absolute','fixed','block','inline','solid','normal','bold','italic','serif',
-        'sans','rgba','linear','gradient','translate','scale','opacity','transition','animation',
-        'overflow','scroll','wrap','column','space','between','around','evenly','start','end',
-        'cover','contain','repeat','position','index','left','right','bottom','header','footer',
-        'main','article','aside','head','body','meta','link','title','charset','viewport',
-        'Ruben','Store','Trade','Vedi'].includes(w));
-    const latinCount = latinWords.length;
-
-    if (logFn) logFn(`Script check: ${nativeChars} ${scriptName} chars, ${latinCount} suspicious Latin words`, 'info');
-
-    // Always run correction pass if ANY suspicious Latin words remain (even a few in the footer)
-    if (nativeChars < 50 || latinCount > 5) {
-      if (logFn) logFn(`Script validation: ${latinCount} Latin words detected — running correction pass to ensure pure ${scriptName} script…`, 'warn');
-
-      // Retry: send the bad HTML back with a correction prompt
-      const suspiciousExamples = latinWords.slice(0, 30).join('", "');
-      const fixPrompt = `The website HTML below still contains Latin-transliterated ${scriptName} words that MUST be converted to actual ${scriptName} script.
-
-FOUND THESE LATIN WORDS THAT NEED FIXING: "${suspiciousExamples}"
-
-INSTRUCTIONS — scan EVERY part of the HTML and fix ALL of these:
-1. FOOTER: section titles like "Kontakt", navigation links like "Lusankarner", "Kap Hastkanel", "Arunadranq", "Nar Advantage", descriptions
-2. NAVIGATION / MENU: all nav links and menu items
-3. HEADINGS: section headers, h1-h6 tags
-4. PARAGRAPHS: all body text, descriptions, about sections
-5. BUTTONS & CTAs: button labels, submit text, call-to-action text
-6. FORM LABELS & PLACEHOLDERS: input labels, placeholder text, select options
-7. COPYRIGHT: footer copyright text
-8. ANY other visible text
-
-Replace EVERY Latin-transliterated ${scriptName} word with its proper ${scriptName}-script equivalent.
-
-The ONLY Latin text allowed: brand name "${sme.name}", "WhatsApp", "Facebook", "Instagram", "@" handles, URLs, and phone numbers like "+374...", "098...".
-
-Output the COMPLETE corrected HTML file. No explanations, no markdown fences.
-
-${html}`;
-
-      const fixSys = `You are an expert ${scriptName} translator and web developer. Your job: find EVERY Latin-transliterated ${scriptName} word in the HTML and replace it with the correct ${scriptName}-script equivalent. You must check ALL sections including footer, nav, forms, buttons, headings, and paragraphs. Output only the complete corrected HTML.`;
-      html = await streamGenerate(fixSys, fixPrompt, 'Language correction');
-      html = html.replace(/^```html\s*/i, '').replace(/\s*```$/i, '').trim();
-      html = await ensureComplete(html, 'Correction');
-
-      if (logFn) logFn(`Correction pass complete — ${Math.round(html.length / 1024)}kb`, 'ok');
-    }
-  }
-
   // Inject actual base64 image data URIs in place of placeholders
   images.forEach((dataUri, i) => {
     html = html.replaceAll(`{{IMG_${i}}}`, dataUri);
   });
-
-  // ── Structural completeness check: must have real body content ──────────────
-  const sectionCount = (html.match(/<section/gi) || []).length;
-  const hasFooter = /<footer/i.test(html);
-  if (sectionCount < 3 || !hasFooter) {
-    if (logFn) logFn(`WARNING: Only ${sectionCount} <section> tags and footer=${hasFooter}. Page may be empty. Content length: ${html.length} chars.`, 'warn');
-  }
 
   // Inject Google Analytics tracking tag into <head>
   const gaTag = `<!-- Google tag (gtag.js) -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=G-87YZHB9TR1"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', 'G-87YZHB9TR1');\n</script>`;
